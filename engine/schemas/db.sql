@@ -7,7 +7,27 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
 -- ============================================================
--- CATÁLOGOS
+-- MULTI-TENANT: empresas que el contador maneja
+-- ============================================================
+-- Forward Costa Rica (la firma contable) maneja varias empresas cliente.
+-- TODA fila contable (factura, línea, asiento) cuelga de una empresa.
+-- Empresa piloto: FUNDACION CRC Endurance (3006696489).
+
+CREATE TABLE IF NOT EXISTS empresas (
+  id              TEXT PRIMARY KEY,                  -- cédula jurídica sin guiones (ej: '3006696489')
+  nombre          TEXT NOT NULL,
+  tipo_cedula     TEXT NOT NULL CHECK (tipo_cedula IN ('fisica','juridica','dimex','nite')),
+  actividad_economica TEXT,
+  moneda_principal TEXT NOT NULL DEFAULT 'CRC' CHECK (moneda_principal IN ('CRC','USD','EUR')),
+  estado          TEXT NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','inactiva')),
+  creada          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO empresas (id, nombre, tipo_cedula, moneda_principal) VALUES
+  ('3006696489', 'FUNDACION CRC Endurance', 'juridica', 'CRC');
+
+-- ============================================================
+-- CATÁLOGOS (compartidos entre empresas)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS tarifas_iva (
@@ -39,6 +59,7 @@ CREATE TABLE IF NOT EXISTS proveedores (
 
 CREATE TABLE IF NOT EXISTS facturas (
   id                       TEXT PRIMARY KEY,                  -- clave_numerica si existe; sino UUID
+  empresa_id               TEXT NOT NULL,                     -- cédula de la empresa cliente (multi-tenant)
   clave_numerica           TEXT UNIQUE,                       -- 50 dígitos (puede ser NULL en facturas escaneadas)
   consecutivo              TEXT,                              -- 20 dígitos
   tipo_documento           TEXT CHECK (tipo_documento IN ('FE','TE','NC','ND')),
@@ -70,13 +91,15 @@ CREATE TABLE IF NOT EXISTS facturas (
   motivo_revision          TEXT,
   pdf_path                 TEXT,                              -- ruta al PDF original archivado
   xml_path                 TEXT,                              -- ruta al XML original si lo hay
+  FOREIGN KEY (empresa_id) REFERENCES empresas(id),
   FOREIGN KEY (proveedor_cedula) REFERENCES proveedores(cedula)
 );
 
-CREATE INDEX IF NOT EXISTS idx_facturas_fecha     ON facturas(fecha_emision);
-CREATE INDEX IF NOT EXISTS idx_facturas_proveedor ON facturas(proveedor_cedula);
-CREATE INDEX IF NOT EXISTS idx_facturas_estado    ON facturas(estado_hacienda);
-CREATE INDEX IF NOT EXISTS idx_facturas_revision  ON facturas(requiere_revision_humana) WHERE requiere_revision_humana = 1;
+CREATE INDEX IF NOT EXISTS idx_facturas_empresa   ON facturas(empresa_id);
+CREATE INDEX IF NOT EXISTS idx_facturas_fecha     ON facturas(empresa_id, fecha_emision);
+CREATE INDEX IF NOT EXISTS idx_facturas_proveedor ON facturas(empresa_id, proveedor_cedula);
+CREATE INDEX IF NOT EXISTS idx_facturas_estado    ON facturas(empresa_id, estado_hacienda);
+CREATE INDEX IF NOT EXISTS idx_facturas_revision  ON facturas(empresa_id, requiere_revision_humana) WHERE requiere_revision_humana = 1;
 
 CREATE TABLE IF NOT EXISTS lineas_factura (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,27 +157,30 @@ CREATE INDEX IF NOT EXISTS idx_chat_user_time ON chat_history(user_id, timestamp
 
 CREATE VIEW IF NOT EXISTS v_resumen_mensual AS
 SELECT
+  empresa_id,
   strftime('%Y-%m', fecha_emision) AS mes,
   COUNT(*)                         AS cantidad_facturas,
   SUM(total_crc)                   AS total_crc,
   SUM(iva_total_crc)               AS iva_crc
 FROM facturas
-GROUP BY strftime('%Y-%m', fecha_emision)
-ORDER BY mes DESC;
+GROUP BY empresa_id, strftime('%Y-%m', fecha_emision)
+ORDER BY empresa_id, mes DESC;
 
 CREATE VIEW IF NOT EXISTS v_top_proveedores AS
 SELECT
+  f.empresa_id,
   p.nombre,
   p.cedula,
   COUNT(f.id)         AS cantidad_facturas,
   SUM(f.total_crc)    AS total_crc
 FROM facturas f
 JOIN proveedores p ON p.cedula = f.proveedor_cedula
-GROUP BY p.cedula
-ORDER BY total_crc DESC;
+GROUP BY f.empresa_id, p.cedula
+ORDER BY f.empresa_id, total_crc DESC;
 
 CREATE VIEW IF NOT EXISTS v_resumen_por_tarifa AS
 SELECT
+  f.empresa_id,
   l.tarifa_iva,
   t.categoria,
   COUNT(*)                       AS cantidad_lineas,
@@ -162,6 +188,7 @@ SELECT
   SUM(l.iva_calculado_crc)       AS iva_crc,
   SUM(l.base_imponible_crc + l.iva_calculado_crc) AS total_crc
 FROM lineas_factura l
+JOIN facturas f    ON f.id = l.factura_id
 JOIN tarifas_iva t ON t.tarifa = l.tarifa_iva
-GROUP BY l.tarifa_iva
-ORDER BY l.tarifa_iva;
+GROUP BY f.empresa_id, l.tarifa_iva
+ORDER BY f.empresa_id, l.tarifa_iva;

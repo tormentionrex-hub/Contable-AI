@@ -19,6 +19,9 @@ credentials/
 google-service-account*.json
 hacienda-token*.json
 
+# Scratch (exploración temporal, no es código de producción)
+.scratch/
+
 # Storage local
 engine/data/
 *.db
