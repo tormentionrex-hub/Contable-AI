@@ -1,0 +1,49 @@
+# Dependencias
+node_modules/
+.pnp.*
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# Variables de entorno (sensibles)
+.env
+.env.local
+.env.*.local
+engine/.env
+
+# Credenciales (NUNCA subir)
+credentials/
+*.json.key
+google-service-account*.json
+hacienda-token*.json
+
+# Storage local
+engine/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+logs/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Claude Code
+.claude/
+
+# Misc
+*.swp
+*.swo
+*~
