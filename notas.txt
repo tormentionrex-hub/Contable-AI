@@ -1,0 +1,407 @@
+================================================================================
+NOTAS — Vitest en FWD Contable AI
+Por qué lo usamos, qué hace y en qué nos beneficia
+Fecha: 2026-05-17
+================================================================================
+
+
+--------------------------------------------------------------------------------
+1. CONTEXTO: ¿QUÉ ES UN TEST RUNNER Y POR QUÉ NECESITAMOS UNO?
+--------------------------------------------------------------------------------
+
+Un "test runner" es la herramienta que ejecuta los tests automatizados de un
+proyecto. Sin él, cada vez que tocás una línea de código tendrías que probar
+manualmente que todo sigue funcionando: levantar el servidor, mandar una
+factura, mirar el resultado en el Sheet, abrir SQLite, comparar números... Eso
+toma horas y nadie lo hace en serio.
+
+Con un test runner, esto se reduce a un solo comando:
+
+    npm test
+
+Y la máquina te dice: "los 6 tests siguen pasando" o "rompiste el cálculo de
+IVA de la línea X". En segundos.
+
+En FWD Contable AI esto es crítico porque el sistema toca números fiscales
+reales. Si rompemos sin querer la reconciliación de IVA, el contador termina
+declarando mal a Hacienda. Un test runner es nuestro cinturón de seguridad.
+
+
+--------------------------------------------------------------------------------
+2. LAS DOS OPCIONES REALES EN 2026: JEST Y VITEST
+--------------------------------------------------------------------------------
+
+En el mundo JavaScript/TypeScript moderno, hay básicamente dos test runners
+serios: Jest y Vitest. Otros (Mocha, Tap, Ava) existen pero son nichos.
+
+JEST fue creado por Facebook en 2014. Durante una década fue el estándar de
+facto. Su API (las palabras "describe", "it", "expect", "beforeAll") se volvió
+universal. Cualquiera que haya tocado tests de JavaScript la conoce.
+
+VITEST fue creado en 2021 por el equipo que hizo Vite (un build tool moderno).
+Tiene EXACTAMENTE la misma API que Jest — los archivos de test son
+intercambiables casi línea por línea —, pero por dentro es una arquitectura
+diferente, diseñada para los proyectos de hoy.
+
+La diferencia clave entre los dos:
+
+   JEST asume que estás programando como en 2014: archivos CommonJS
+   (con "require"), sin TypeScript nativo, sin imports modernos.
+
+   VITEST asume que estás programando como en 2024+: archivos ESM
+   (con "import"), TypeScript directo, herramientas modernas.
+
+
+--------------------------------------------------------------------------------
+3. NUESTRO STACK Y POR QUÉ IMPORTA
+--------------------------------------------------------------------------------
+
+El motor de FWD Contable AI (la carpeta engine/) se construyó con decisiones
+muy concretas, todas alineadas con la era moderna:
+
+   * TypeScript estricto (lo decidimos en CLAUDE.md sección 13).
+   * "type": "module" en package.json — esto significa ESM nativo.
+   * Imports al estilo nuevo: import { config } from './lib/config.js'.
+     Notá el ".js" al final — eso es obligatorio en ESM aunque el archivo
+     real sea .ts. Es raro al principio, pero es el estándar.
+   * import.meta.url para resolver paths absolutos (más limpio que
+     __dirname / __filename del mundo CommonJS).
+   * Node 24, donde ESM ya es ciudadano de primera clase.
+   * El runner de desarrollo es "tsx", que entiende TS y ESM nativo.
+
+Cuando un proyecto está construido así, Vitest funciona en frío. No hay nada
+que configurar, no hay transformers, no hay flags experimentales.
+
+Cuando intentás meter Jest en este mismo proyecto, te encontrás con:
+
+   - Hay que instalar ts-jest (o @swc/jest) para que entienda TypeScript.
+     Eso es un transformer extra: cada test pasa por una capa más.
+
+   - Hay que configurar Jest en modo ESM, que sigue marcado como
+     "experimental" en la documentación oficial en 2026.
+
+   - Hay que correr siempre con NODE_OPTIONS=--experimental-vm-modules.
+     Eso significa que el comando "npm test" no es solo "npm test", es
+     "ponele a node un flag experimental y después corré jest".
+
+   - Hay que escribir un moduleNameMapper que reescriba los imports con
+     ".js" para que el resolver de Jest no se confunda.
+
+   - import.meta.url a veces no funciona o devuelve un valor falso en Jest,
+     y hay que mockearlo a mano.
+
+   - Cada upgrade de Node o de Jest puede romper la cadena. Es una zona
+     conocida de inestabilidad.
+
+Costo estimado para hacer andar Jest en este proyecto: entre 30 minutos y
+varias horas, dependiendo de qué edge case aparezca. Ganancia real:
+exactamente cero — los tests harían lo mismo que ya hacen.
+
+
+--------------------------------------------------------------------------------
+4. QUÉ HACE VITEST EXACTAMENTE EN NUESTRO PROYECTO
+--------------------------------------------------------------------------------
+
+Cuando corrés "npm test", Vitest hace esto:
+
+PASO 1 — DESCUBRIMIENTO
+   Lee la configuración (en nuestro caso, dentro de package.json bajo la
+   clave "vitest"). Encuentra qué archivos son tests. Por ahora, todos los
+   que matcheen "tests/**/*.test.ts".
+
+PASO 2 — TRANSFORMACIÓN
+   Cada archivo .ts pasa por esbuild (el motor de Vite). esbuild lo
+   convierte a JavaScript ejecutable en memoria, sin escribir nada a disco.
+   Esto es muy rápido: milisegundos por archivo.
+
+PASO 3 — EJECUCIÓN
+   Vitest corre cada test en un proceso aislado (un "worker"). En nuestro
+   caso forzamos que sean uno a la vez (fileParallelism: false), porque
+   los tests escriben en SQLite y se pisarían si fueran en paralelo.
+
+PASO 4 — VALIDACIÓN
+   Cada "expect(...)" compara el valor real contra el esperado. Si
+   coincide, marca el test verde. Si no, lo marca rojo y muestra
+   exactamente qué línea falló y cuál era la diferencia.
+
+PASO 5 — REPORTE
+   Al terminar, imprime el resumen:
+
+      Test Files  2 passed (2)
+           Tests  6 passed | 1 skipped (7)
+        Duration  62.01 s
+
+   En menos de 1 segundo te enterás si todo está bien o no.
+
+Para FWD Contable AI, esto significa que los 6 tests actuales corren así:
+
+   tests/reconciliation.test.ts (3 tests unitarios, 2 milisegundos):
+      * "coincide exactamente con el pie cuando la suma cuadra"
+      * "detecta error cuando el pie no concuerda"
+      * "aplica tolerancia ±max(1, total*0.005)"
+
+   tests/docscan.test.ts (3 tests de integración con Claude real, ~65s):
+      * "CSU Rompope: tarifa mixta 1% + 13%, total ₡25.970"
+      * "CSU Confites OH: tarifa 13%, total ₡3.760"
+      * "Pequeño Mundo Zapote: tarifa marcada 13%, total ₡6.900"
+
+Los unitarios validan la matemática pura (sin Claude). Los de integración
+suben un PDF golden, lo mandan al pipeline completo DocScan+TaxIVA, y
+verifican que los números extraídos coincidan con los conocidos.
+
+
+--------------------------------------------------------------------------------
+5. BENEFICIOS CONCRETOS PARA FWD CONTABLE AI
+--------------------------------------------------------------------------------
+
+5.1. CERO CONFIGURACIÓN PARA EL CASO HABITUAL
+
+Otros runners requieren un archivo de config dedicado, un transformer, etc.
+Vitest entiende TypeScript + ESM directo. La configuración que tenemos
+(7 líneas en package.json) existe SOLO porque nuestros tests son especiales:
+llaman a Claude real y comparten DB. Sin esos requerimientos atípicos, no
+necesitaríamos config alguna.
+
+
+5.2. MISMA API QUE JEST → CERO CURVA DE APRENDIZAJE
+
+Cualquier persona que ya sepa Jest se siente en casa. Los archivos de test
+empiezan con "import { describe, it, expect } from 'vitest'" y de ahí en
+adelante es idéntico a Jest. Si algún día decidimos migrar a otra
+herramienta, los tests no se reescriben — solo cambia el import.
+
+Equivalencias rápidas (Jest → Vitest):
+   describe / it / expect          → idénticos
+   beforeAll / afterEach           → idénticos
+   jest.fn()                       → vi.fn()
+   jest.mock('foo')                → vi.mock('foo')
+   jest.setTimeout(30_000)         → testTimeout: 30_000 en config
+
+
+5.3. WATCH MODE INSTANTÁNEO PARA DESARROLLO
+
+Cuando estás escribiendo código y querés ver al toque si rompiste algo,
+podés correr:
+
+    npm run test:watch
+
+Vitest deja un proceso vivo, observa los archivos del proyecto, y cada vez
+que guardás un cambio re-corre SOLO los tests afectados. Esto es posible
+porque adentro tiene un Hot Module Reload (HMR) — la misma técnica que
+hace tan rápido al frontend de Vite. En la práctica: cambiás algo, ves
+verde o rojo en menos de un segundo.
+
+
+5.4. ENCAJA CON EL FRONTEND DE FASE 4 SIN ROZAR
+
+En Fase 4 vamos a hacer el frontend en React + Vite. Vite y Vitest comparten
+configuración (vite.config.ts). Esto significa que los tests del frontend
+van a:
+
+   * Reusar la misma cadena de transforms.
+   * Entender JSX, CSS modules, alias de imports, lo que sea que hagamos.
+   * Correrse con el mismo comando "npm test" en cada workspace.
+
+Si usáramos Jest, en Fase 4 tendríamos que duplicar configuración: una
+para el backend (jest.config), otra para el frontend (jest.config con
+React Testing Library), más mappers, más transformers. Con Vitest es uno
+solo.
+
+
+5.5. SOPORTA TODO LO QUE NECESITAMOS PARA EL FUTURO
+
+   - Coverage (informe de qué porcentaje del código está probado):
+     npm test -- --coverage. Listo. No instala nada extra.
+
+   - Snapshots (comparaciones contra "estado guardado"):
+     funcionan igual que en Jest.
+
+   - Mocks (reemplazar dependencias por versiones falsas en tests):
+     mismo API que Jest, vi.mock(...).
+
+   - UI Mode (interfaz gráfica para explorar tests en el navegador):
+     npm run test -- --ui. Útil para depurar.
+
+   - Tests de integración con HTTP, DB, archivos: todo soportado nativo.
+
+
+5.6. SEGURIDAD FISCAL: TESTS RÁPIDOS = TESTS FRECUENTES
+
+Esto es lo más importante para un proyecto contable.
+
+Si los tests son lentos o frágiles, nadie los corre antes de commitear.
+Si nadie los corre, se acumulan regresiones silenciosas. Si se acumulan
+regresiones, un día el sistema empieza a declarar IVA mal y el contador
+no se da cuenta hasta que Hacienda manda una carta.
+
+Vitest hace que los tests sean lo suficientemente rápidos y simples como
+para que sea TRIVIAL correrlos. Los 3 unitarios tardan 2 milisegundos.
+Eso quiere decir que en watch mode, cada vez que tocás reconcileFactura,
+sabés inmediatamente si rompiste la matemática del IVA. Los de integración
+tardan ~65s, lo cual es razonable para correrlos antes de cada commit.
+
+Esa fricción baja es lo que separa un proyecto con tests reales de uno
+con tests "decorativos".
+
+
+--------------------------------------------------------------------------------
+6. CONFIGURACIÓN ACTUAL Y POR QUÉ CADA LÍNEA EXISTE
+--------------------------------------------------------------------------------
+
+Toda la config vive en engine/package.json bajo la clave "vitest":
+
+    "vitest": {
+      "include": ["tests/**/*.test.ts"],
+      "testTimeout": 120000,
+      "hookTimeout": 60000,
+      "fileParallelism": false,
+      "sequence": { "concurrent": false },
+      "env": {
+        "NODE_ENV": "test",
+        "LOG_LEVEL": "warn"
+      }
+    }
+
+include
+   Le dice a Vitest que solo busque tests dentro de engine/tests/. Si no
+   pusiéramos esto, podría llegar a tomar archivos .test.ts de
+   node_modules y ejecutarlos por error.
+
+testTimeout: 120000
+   Cada test individual tiene como máximo 120 segundos para terminar. El
+   default de Vitest son 5 segundos. Como nuestros tests de integración
+   llaman a Claude real, que tarda 18 a 29 segundos por factura, 5
+   segundos no alcanzan. Sin esta línea, los 3 tests de PDFs fallarían
+   por timeout.
+
+hookTimeout: 60000
+   Los "hooks" son funciones que corren antes o después de un test (como
+   beforeAll). Nuestro beforeAll llama a initDb() que crea las tablas de
+   SQLite. En arranque frío puede tardar un poco. Le damos 60 segundos
+   de margen.
+
+fileParallelism: false
+   Vitest por default ejecuta varios archivos de test en paralelo, en
+   procesos distintos, para terminar antes. En nuestro caso eso es
+   peligroso porque docscan.test.ts y reconciliation.test.ts comparten
+   la misma base de datos SQLite (engine/data/fwd-contable.db). Si se
+   ejecutan a la vez, escriben encima del otro y se pisan. Esta línea
+   los obliga a ir uno tras otro.
+
+sequence: { concurrent: false }
+   Refuerzo del anterior. Asegura que dentro de UN archivo, los tests
+   también van uno a la vez (en serie). Por ejemplo, dentro de
+   docscan.test.ts, primero termina el test de CSU Rompope, después
+   empieza el de CSU Confites, etc.
+
+env.NODE_ENV: "test"
+   Marca el ambiente como "test". Nuestro logger (src/lib/logger.ts) usa
+   esto para silenciarse durante los tests y no ensuciar la salida con
+   miles de líneas de log.
+
+env.LOG_LEVEL: "warn"
+   Si por algún motivo el logger sí imprime, solo deja pasar warnings y
+   errores. Si querés debuggear un test, podés sobrescribirlo desde la
+   terminal:
+       LOG_LEVEL=debug npm test     (bash o git-bash)
+       $env:LOG_LEVEL='debug'; npm test     (PowerShell)
+
+
+--------------------------------------------------------------------------------
+7. CÓMO USAR VITEST EN EL DÍA A DÍA
+--------------------------------------------------------------------------------
+
+Comandos típicos, en orden de uso:
+
+    npm test
+        Corre toda la suite y termina. Esto es lo que usaríamos en CI
+        algún día. Output limpio: "6 passed".
+
+    npm run test:watch
+        Modo watch. Queda vivo, observa los archivos del proyecto. Cada
+        vez que guardás un cambio, re-corre los tests afectados. Cuando
+        terminás de programar, salís con Ctrl+C.
+
+    npx vitest run -t "CSU Rompope"
+        Corre SOLO los tests cuyo nombre incluya "CSU Rompope". Útil
+        cuando estás depurando una factura específica.
+
+    npx vitest run tests/reconciliation.test.ts
+        Corre SOLO los tests de un archivo. Útil cuando sabés que el
+        problema está en una zona específica del código.
+
+    LOG_LEVEL=debug npm test
+        Corre todo con logs detallados. Útil cuando un test falla y no
+        entendés por qué.
+
+
+--------------------------------------------------------------------------------
+8. ¿Y SI EN EL FUTURO ALGUIEN INSISTE EN JEST?
+--------------------------------------------------------------------------------
+
+Está documentado que es factible, aunque trabajoso. El procedimiento
+aproximado sería:
+
+   1. npm uninstall vitest
+      npm install --save-dev jest ts-jest @types/jest
+
+   2. En cada archivo .test.ts, cambiar:
+         import { describe, it, expect } from 'vitest'
+      por:
+         import { describe, it, expect } from '@jest/globals'
+
+   3. Crear engine/jest.config.ts con preset ESM, transformer ts-jest,
+      moduleNameMapper para los imports con .js, y un par de workarounds
+      para import.meta.url.
+
+   4. Cambiar el script test en package.json:
+      "test": "vitest run"
+      por:
+      "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+
+Tiempo estimado del proceso: 30 a 60 minutos en el caso fácil. Si aparece
+un edge case raro (suele pasar), hasta varias horas. Como los tests no
+mockean nada exótico, lo difícil no es la lógica de los tests sino la
+cadena de transforms.
+
+La conclusión es: Vitest no es una jaula. Si algún día hay una razón
+fuerte para migrar, se puede. Pero hoy no hay razón.
+
+
+--------------------------------------------------------------------------------
+9. RESUMEN EJECUTIVO
+--------------------------------------------------------------------------------
+
+Pregunta: ¿Por qué Vitest y no Jest?
+Respuesta: Porque nuestro motor es TypeScript + ESM + Node 24. Vitest
+funciona de fábrica en este stack; Jest necesita transformers, flags
+experimentales y workarounds. Mismo API, menos dolor.
+
+Pregunta: ¿Es estable?
+Respuesta: Vitest 2.x (lo que usamos) es producción desde 2024. Millones
+de descargas semanales. Lo usan Vue, Nuxt, Astro, SvelteKit, Remix, Solid
+y prácticamente toda la generación moderna de frameworks.
+
+Pregunta: ¿Está aprobado en CLAUDE.md?
+Respuesta: Sí, está listado oficialmente en la sección 13 como dependencia
+de desarrollo del motor.
+
+Pregunta: ¿Cambia algo para alguien que ya sabía Jest?
+Respuesta: Solo el nombre del paquete. La API es la misma.
+
+Pregunta: ¿En qué nos beneficia concretamente?
+Respuesta:
+   * Cero configuración extra para ESM + TS.
+   * Tests rápidos → tests frecuentes → menos regresiones contables.
+   * Compatibilidad nativa con el frontend Vite de Fase 4.
+   * Watch mode instantáneo para desarrollo.
+   * Mismo workflow para backend y frontend.
+   * Salida de escape clara si algún día hay que migrar.
+
+Pregunta: ¿Cuánto cuesta migrar a Jest si nos arrepentimos?
+Respuesta: 30-60 minutos en el caso normal. Los archivos de test no se
+reescriben — solo cambia el import y se agrega la cadena de transforms.
+
+================================================================================
+FIN
+================================================================================
