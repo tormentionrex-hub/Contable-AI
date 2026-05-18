@@ -6,6 +6,69 @@ Tu tarea es ejecutar la Fase 2 completa del proyecto FWD Contable AI. Antes de t
 
 NO me preguntes cosas que ya están en esos archivos. Si dudás de algo que NO está, asumí razonablemente y dejá `// TODO(fase-2): <pregunta>` en el código.
 
+================================================================
+ESTADO ACTUAL — PRE-REQUISITOS YA COMPLETADOS POR EL USUARIO
+================================================================
+
+Antes de lanzarte, el usuario completó manualmente lo siguiente. NO lo rehagas. Solo verificá que esté en orden con un `ls`/`Test-Path` y si todo OK, avanzá:
+
+1. PROYECTO GOOGLE CLOUD CREADO
+   - Nombre: CONTABLE AI
+   - Project ID: contable-ai-496703
+   - Project number: 951472716607
+   - Sin organización (cuenta personal).
+   - El usuario NO activó el free trial de $300. NO se lo sugieras.
+
+2. APIS DE GOOGLE HABILITADAS EN ESE PROYECTO
+   - Google Sheets API (sheets.googleapis.com) → Enabled
+   - Google Drive API   (drive.googleapis.com)  → Enabled
+   - Ambas confirmadas vía Console.
+
+3. SERVICE ACCOUNT CREADA
+   - Email: contable-ia@contable-ai-496703.iam.gserviceaccount.com
+   - Display name: Contable-ia
+   - Sin roles a nivel proyecto (no hace falta para Sheets/Drive operando sobre archivos propios).
+   - Tiene UNA clave JSON activa (Key ID empieza con 70571226...).
+
+4. JSON DE LA SERVICE ACCOUNT YA ESTÁ EN EL PROYECTO
+   - Path: ./credentials/google-service-account.json (relativo a la raíz del proyecto).
+   - Tamaño: 2370 bytes.
+   - Validado: type=service_account, project_id=contable-ai-496703, client_email=contable-ia@contable-ai-496703.iam.gserviceaccount.com, private_key presente (PEM correcto).
+   - La carpeta credentials/ está en .gitignore (verificado con `git check-ignore`).
+
+5. .ENV YA TIENE LAS VARIABLES DE FASE 2
+   El archivo engine/.env ya contiene (entre otras heredadas de Fase 1):
+   - GOOGLE_SERVICE_ACCOUNT_JSON=./credentials/google-service-account.json
+   - GOOGLE_SHEET_ID_FUNDACION_CRC=        ← VACÍO A PROPÓSITO. Vos lo creás en el Paso 8 y guardás el ID en la tabla `empresas` Y reescribís esta variable en .env con el ID generado.
+   - CONTADOR_EMAIL=gonzalezbustamantechristopher@gmail.com  ← compartir el Sheet con este email como editor.
+   - HACIENDA_API_URL=https://api.hacienda.go.cr
+   - HACIENDA_TC_FALLBACK_FAWAZ=https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json
+   - HACIENDA_TC_FALLBACK_FRANKFURTER=https://api.frankfurter.dev/v1/latest?from=USD&to=CRC
+
+   El .env también arrastra variables VIEJAS sin uso de Fase 1 (BCCR_*, HACIENDA_PADRON_URL, HACIENDA_FE_USER, HACIENDA_FE_PASS, GOOGLE_SHEET_ID). NO LAS BORRES (puede romper algo si las leés por accidente). Solo ignoralas en el código nuevo. El schema zod de config.ts las debe marcar opcionales/deprecated.
+
+================================================================
+LO QUE TENÉS QUE HACER PARA AVANZAR
+================================================================
+
+Paso 0 obligatorio antes de seguir: corré estas 4 verificaciones en orden y reportá el output al usuario al final del run. Si alguna falla, parate y avisá:
+
+  a) Test-Path "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\credentials\google-service-account.json"
+     → debe devolver True.
+  b) Get-Content engine\.env | Select-String "^(GOOGLE_SERVICE_ACCOUNT_JSON|GOOGLE_SHEET_ID_FUNDACION_CRC|CONTADOR_EMAIL|HACIENDA_API_URL)=" | Measure-Object -Line
+     → debe devolver Lines = 4.
+  c) curl -s https://api.hacienda.go.cr/indicadores/tc/dolar | jq .
+     → debe devolver JSON con compra.valor y venta.valor (probálo en vivo).
+  d) curl -s "https://api.hacienda.go.cr/fe/ae?identificacion=3006696489" | jq .nombre
+     → debe devolver "FUNDACION CRC ENDURANCE".
+
+Si las 4 verificaciones pasan, arrancá con el plan paso a paso. Si alguna falla, el usuario tiene que destrabarlo manualmente — pedile lo específico que falte sin redoing lo que ya está.
+
+NOTA SOBRE EL SHEET: cuando llegues al Paso 8 (createMachote), vas a usar la Service Account "contable-ia@contable-ai-496703.iam.gserviceaccount.com" para crear el Spreadsheet. Esa cuenta es DUEÑA del Sheet recién creado. Compartilo con CONTADOR_EMAIL como "writer" (editor) usando Drive API permissions.create. Después escribí el ID resultante en:
+  - tabla `empresas` campo `sheet_id` WHERE id='3006696489'
+  - .env línea GOOGLE_SHEET_ID_FUNDACION_CRC=<el ID>
+  - log del reporte final para que el usuario lo encuentre rápido.
+
 OBJETIVO DE FASE 2
 
 Conectar el motor con el mundo externo:
