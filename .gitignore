@@ -13,6 +13,11 @@ build/
 .env.*.local
 engine/.env
 
+# Documentación de setup local que contiene el .env literal y emails personales.
+# Funcionalmente equivalente al .env — NUNCA subir.
+SETUP-OTRA-PC.md
+SETUP-OTRA-PC-PROMPT.txt
+
 # Credenciales (NUNCA subir)
 credentials/
 *.json.key
