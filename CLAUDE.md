@@ -486,28 +486,28 @@ Fase 5: deploy del motor a Easypanel (al lado de n8n). Frontend se sirve estáti
 - ✅ Git init + 2 commits locales (`0dedd89` y `b7916dd`).
 - ✅ `.gitignore` que protege `.env`, credenciales, `.scratch/`, `data/`.
 
-### Fase 1 — PENDIENTE
+### Fase 1 — COMPLETADA
 
-Ver `docs/PROMPT-FASE-1.md` para el prompt completo de ejecución.
+Ver `docs/FASE-1-REPORTE.md`.
 
-Output esperado:
+- ✅ Motor Express con endpoints `/health` y `/process-document` funcionales.
+- ✅ Sub-agentes DocScan y Tax-IVA con Claude Agent SDK cargando los skills.
+- ✅ Validación con Ajv contra `factura.schema.json`.
+- ✅ SQLite inicializada desde `db.sql`.
+- ✅ Tests passing con los 4 PDFs golden (Caja Chica en skip hasta Fase 2).
 
-- Motor Express con endpoints `/health` y `/process-document` funcionales.
-- Sub-agentes DocScan y Tax-IVA con Claude Agent SDK cargando los skills.
-- Validación con Ajv contra `factura.schema.json`.
-- SQLite inicializada desde `db.sql`.
-- Tests passing con los 4 PDFs golden.
-- Resultados conocidos verificables:
-  - CSU Rompope (₡25.970, tarifas 1 % + 13 %).
-  - CSU Confites OH (₡3.760, tarifa 13 %).
-  - Pequeño Mundo Zapote (₡6.900, tarifa 13 %).
-  - Caja Chica Santa Ana: 6 sub-facturas, incluyendo OCR degradado en página 4.
+### Fase 2 — COMPLETADA (con bootstrap manual del Sheet pendiente)
 
-### Fase 2 — Pendiente
+Ver `docs/FASE-2-REPORTE.md`.
 
-- MCPs: hacienda-cr (TC + padrón + CABYS, sin auth), fwd-db.
-- Service Account Google + Sheet creado.
-- Escritura a Sheets desde Tax-IVA.
+- ✅ MCPs in-process `hacienda-cr` (TC + padrón + CABYS) y `fwd-db` (SELECT-only + helpers).
+- ✅ Service Account Google + librería `sheets.ts` con createMachote/appendFactura/markRevision.
+- ✅ Splitter de PDFs multi-factura con `pdf-lib` — Caja Chica Santa Ana detecta 6 sub-facturas.
+- ✅ Vision para PDFs escaneados (Read tool habilitado on-demand).
+- ✅ Endpoints `/hacienda/tc`, `/hacienda/cedula/:cedula`, `/facturas`, `/adelantos`, `/caja-chica/saldo`.
+- ✅ Caches: `tipo_cambio_cache`, `cedulas_cache` (TTL 30d), `adelantos_caja_chica`.
+- ✅ 16/16 tests verdes en ~125s.
+- ⏳ Bootstrap del Sheet machote: la SA en cuenta personal NO tiene quota de Drive. Solución de 5 clics documentada en el reporte.
 
 ### Fase 3 — Pendiente
 

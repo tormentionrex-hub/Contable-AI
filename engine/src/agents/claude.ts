@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type SDKMessage,
+  type SDKResultMessage,
+  type McpSdkServerConfigWithInstance,
+} from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
 import { AgenteFalloError } from '../lib/errors.js';
@@ -8,6 +13,12 @@ import { AgenteFalloError } from '../lib/errors.js';
 export interface SubagentDefinition {
   name: string;
   skillPath: string;
+  /**
+   * Servidores MCP in-process disponibles para este sub-agente.
+   * Las herramientas expuestas se nombran como `mcp__<server>__<tool>` y deben
+   * incluirse en `allowedTools` para que el agente pueda invocarlas.
+   */
+  mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
 }
 
 export interface RunOptions {
@@ -19,6 +30,21 @@ export interface RunOptions {
   model?: string;
   /** Máximo de turnos (default 3 — uno suele bastar). */
   maxTurns?: number;
+  /**
+   * Override de MCP servers para esta corrida (sobrescribe los de la definición).
+   * Útil en tests para inyectar mocks.
+   */
+  mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
+  /**
+   * Built-in tools del Agent SDK habilitados ADEMÁS de los MCPs.
+   * Ejemplo: `['Read']` cuando el agente necesita leer un PDF escaneado del disco.
+   */
+  builtinTools?: string[];
+  /**
+   * Directorios que el agente puede leer (cuando builtinTools incluye Read).
+   * Por defecto, el cwd del proceso.
+   */
+  additionalDirectories?: string[];
 }
 
 export interface RunResult<T = unknown> {
@@ -99,20 +125,33 @@ export function createSubagent(def: SubagentDefinition): Subagent {
 
       // El SDK lanza el binario `claude` del usuario (Claude Code Max plan).
       // No pasamos ANTHROPIC_API_KEY: la autenticación viene de la sesión local.
+
+      // Resolver MCPs: opts.mcpServers tiene prioridad (útil para tests).
+      const mcpServers = opts.mcpServers ?? def.mcpServers ?? {};
+      // Construir allowedTools: cada MCP expone N tools como `mcp__<server>__<tool>`.
+      // El SDK las descubre dinámicamente; les damos permisos via wildcard del server.
+      const builtin = opts.builtinTools ?? [];
+      const allowedTools = [...builtin, ...Object.keys(mcpServers).map((server) => `mcp__${server}`)];
+
       const q = query({
         prompt: opts.prompt,
         options: {
           systemPrompt,
           model,
-          // Sin herramientas — el agente solo razona sobre el texto del prompt.
-          // (En fases siguientes se habilitan MCPs específicos: bccr, hacienda, fwd-db.)
-          tools: [],
-          mcpServers: {},
+          // Por default sin built-in tools (aislado). El sub-agente solo accede
+          // a los MCPs in-process pasados arriba.
+          // Si builtinTools incluye herramientas (ej: ['Read']), las habilitamos.
+          tools: builtin.length > 0 ? builtin : [],
+          mcpServers,
+          allowedTools,
+          ...(opts.additionalDirectories && opts.additionalDirectories.length > 0
+            ? { additionalDirectories: opts.additionalDirectories }
+            : {}),
           // Aislado de settings de usuario — no carga CLAUDE.md ajenos.
           settingSources: [],
           // Sin persistencia de sesión: cada llamada es one-shot.
           persistSession: false,
-          maxTurns: opts.maxTurns ?? 3,
+          maxTurns: opts.maxTurns ?? 5,
           permissionMode: 'bypassPermissions',
           allowDangerouslySkipPermissions: true,
           ...(opts.outputSchema

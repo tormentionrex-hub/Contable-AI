@@ -85,23 +85,30 @@ describe('DocScan + Tax-IVA pipeline contra PDFs golden', () => {
     180_000,
   );
 
-  // Caja Chica Santa Ana = 10 páginas con MÚLTIPLES facturas distintas.
-  // En Fase 1 no implementamos splitter. El agente extrae la primera factura legible
-  // (Pequeño Mundo Guachipelín). Si querés probarla, descomentá el `.skip`.
-  it.skip(
-    'Caja Chica Santa Ana — multi-factura (splitter pendiente fase 2+)',
+  // Caja Chica Santa Ana — 10 páginas, multi-factura. En Fase 2 el splitter las separa;
+  // este test verifica el splitter + que la primera sub-factura extraída por DocScan
+  // sea coherente. NO procesamos las 6+ sub-facturas con Claude porque tardaría demasiado;
+  // eso queda para una corrida e2e del endpoint /process-document.
+  it(
+    'Caja Chica Santa Ana — splitter detecta ≥5 facturas y DocScan procesa la primera',
     async () => {
-      const buffer = fs.readFileSync(
-        path.resolve(__dirname, 'fixtures', 'Caja Chica Santa Ana Julio 2024.pdf'),
-      );
+      const { splitMultiInvoicePdf } = await import('../src/lib/pdf-split.js');
+      const buffer = loadFixture('Caja Chica Santa Ana Julio 2024.pdf');
+      const partes = await splitMultiInvoicePdf(buffer);
+      expect(partes.length).toBeGreaterThanOrEqual(5);
+
       const factura = await extractFactura({
-        buffer,
+        buffer: partes[0]!,
         mimeType: 'application/pdf',
-        filename: 'Caja Chica Santa Ana Julio 2024.pdf',
+        filename: 'Caja Chica Santa Ana Julio 2024.pdf#1',
       });
       expect(factura.factura.lineas.length).toBeGreaterThan(0);
+      // La primera sub-factura es Pequeño Mundo Guachipelín (~₡16.500 según fixtures/README.md).
+      // Tolerancia amplia porque el splitter puede agrupar de forma ligeramente distinta.
+      expect(factura.factura.totales.total_factura).toBeGreaterThan(1_000);
+      expect(factura.factura.totales.total_factura).toBeLessThan(100_000);
     },
-    180_000,
+    240_000,
   );
 });
 

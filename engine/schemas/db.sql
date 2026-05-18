@@ -20,8 +20,13 @@ CREATE TABLE IF NOT EXISTS empresas (
   actividad_economica TEXT,
   moneda_principal TEXT NOT NULL DEFAULT 'CRC' CHECK (moneda_principal IN ('CRC','USD','EUR')),
   estado          TEXT NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa','inactiva')),
+  sheet_id        TEXT,                              -- Google Sheet ID del machote Forward CR
   creada          TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Migración idempotente: agregar sheet_id si la tabla ya existía sin ese campo.
+-- SQLite rechaza ADD COLUMN si la columna ya existe; usamos PRAGMA + lectura para chequear.
+-- El script db-init.ts maneja esto chequeando schema antes de aplicar.
 
 INSERT OR IGNORE INTO empresas (id, nombre, tipo_cedula, moneda_principal) VALUES
   ('3006696489', 'FUNDACION CRC Endurance', 'juridica', 'CRC');
@@ -177,6 +182,53 @@ FROM facturas f
 JOIN proveedores p ON p.cedula = f.proveedor_cedula
 GROUP BY f.empresa_id, p.cedula
 ORDER BY f.empresa_id, total_crc DESC;
+
+-- ============================================================
+-- FASE 2 — Caches y caja chica
+-- ============================================================
+
+-- Tipo de cambio cacheado por fecha+moneda.
+-- `fecha`         = fecha solicitada (lo que pidió el cliente).
+-- `fecha_vigente` = fecha que Hacienda devolvió (puede ser día hábil anterior si la pedida era no hábil).
+CREATE TABLE IF NOT EXISTS tipo_cambio_cache (
+  fecha          TEXT NOT NULL,
+  moneda         TEXT NOT NULL CHECK (moneda IN ('USD','EUR')),
+  compra         REAL NOT NULL,
+  venta          REAL NOT NULL,
+  fecha_vigente  TEXT NOT NULL,
+  fuente         TEXT NOT NULL CHECK (fuente IN ('hacienda','fallback_fawaz','fallback_frankfurter')),
+  capturado      TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (fecha, moneda)
+);
+
+-- Cache del padrón de contribuyentes (Hacienda).
+-- TTL aplicado en código: 30 días desde `consultado`.
+CREATE TABLE IF NOT EXISTS cedulas_cache (
+  cedula              TEXT PRIMARY KEY,
+  tipo_identificacion TEXT,
+  nombre              TEXT,
+  estado              TEXT NOT NULL CHECK (estado IN ('inscrito','inactivo','no_encontrada')),
+  motivo_estado       TEXT,
+  actividad_economica TEXT,
+  actividades_json    TEXT,
+  consultado          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Adelantos de caja chica (P01 del taller).
+-- Saldo = sum(adelantos abiertos) - sum(facturas asociadas al periodo).
+CREATE TABLE IF NOT EXISTS adelantos_caja_chica (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  empresa_id      TEXT NOT NULL,
+  monto_crc       REAL NOT NULL,
+  fecha_entrega   TEXT NOT NULL,
+  responsable     TEXT,
+  estado          TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto','cerrado')),
+  notas           TEXT,
+  creado          TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (empresa_id) REFERENCES empresas(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_adelantos_empresa ON adelantos_caja_chica(empresa_id, estado);
 
 CREATE VIEW IF NOT EXISTS v_resumen_por_tarifa AS
 SELECT

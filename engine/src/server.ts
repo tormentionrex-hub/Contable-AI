@@ -5,6 +5,9 @@ import { logger } from './lib/logger.js';
 import { initDb } from './lib/db-init.js';
 import { healthRouter } from './routes/health.js';
 import { processDocumentRouter } from './routes/process-document.js';
+import { haciendaRouter } from './routes/hacienda.js';
+import { facturasRouter } from './routes/facturas.js';
+import { adelantosRouter } from './routes/adelantos.js';
 import { AppError } from './lib/errors.js';
 
 const app = express();
@@ -36,6 +39,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 app.use(healthRouter);
 app.use(processDocumentRouter);
+app.use(haciendaRouter);
+app.use(facturasRouter);
+app.use(adelantosRouter);
 
 // 404
 app.use((_req: Request, res: Response) => {

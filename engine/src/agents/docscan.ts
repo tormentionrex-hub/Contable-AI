@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { createSubagent, defaultSkillPath, type Subagent } from './claude.js';
 import { extractPdfText } from '../lib/pdf-extract.js';
 import { parseHaciendaXML } from '../lib/xml-parse.js';
@@ -5,6 +8,7 @@ import { validateFactura, getSchema } from '../lib/validator.js';
 import { FacturaInvalidaError, AgenteFalloError, ArchivoInvalidoError } from '../lib/errors.js';
 import type { FacturaSchemaJson } from '../types/factura.js';
 import { logger } from '../lib/logger.js';
+import { config } from '../config.js';
 
 let _agent: Subagent | null = null;
 function getAgent(): Subagent {
@@ -47,11 +51,8 @@ export async function extractFactura(input: ExtractInput): Promise<FacturaSchema
   } else if (input.mimeType === 'application/pdf' || input.filename.toLowerCase().endsWith('.pdf')) {
     const pdf = await extractPdfText(input.buffer);
     if (pdf.isScanned) {
-      // TODO(fase-1): para escaneados reales necesitaremos enviar el PDF como
-      // adjunto (content block `document`). Por ahora intentamos con el poco
-      // texto que haya y dejamos que el modelo marque OCR_DEGRADADO si no puede.
       fuenteSugerida = 'pdf_escaneado';
-      log.warn('PDF escaneado o sin texto extraíble', {
+      log.warn('PDF escaneado o sin texto extraíble — usando Vision', {
         filename: input.filename,
         textLength: pdf.text.length,
       });
@@ -71,11 +72,41 @@ export async function extractFactura(input: ExtractInput): Promise<FacturaSchema
     );
   }
 
+  // Si es PDF escaneado, guardamos el buffer en un archivo temporal y le habilitamos
+  // a DocScan la herramienta `Read` para que el modelo lea el PDF directamente (Vision).
+  let extraOpts: { builtinTools?: string[]; additionalDirectories?: string[] } = {};
+  let tempPdfPath: string | null = null;
+  if (
+    fuenteSugerida === 'pdf_escaneado' &&
+    (input.mimeType === 'application/pdf' || input.filename.toLowerCase().endsWith('.pdf'))
+  ) {
+    if (!fs.existsSync(config.paths.uploads)) {
+      fs.mkdirSync(config.paths.uploads, { recursive: true });
+    }
+    tempPdfPath = path.join(config.paths.uploads, `scan-${randomUUID()}.pdf`);
+    fs.writeFileSync(tempPdfPath, input.buffer);
+    extraOpts = {
+      builtinTools: ['Read'],
+      additionalDirectories: [config.paths.uploads, config.paths.projectRoot],
+    };
+    userPrompt = `${userPrompt}\n\n=== ARCHIVO LOCAL ===\nEl PDF está en ${tempPdfPath}. Usá la herramienta Read con ese path absoluto para verlo con Vision si el texto extraído arriba es vacío o ilegible.\n=== FIN ===`;
+  }
+
   const { output, durationMs } = await agent.run<unknown>({
     prompt: userPrompt,
     outputSchema: schema,
-    maxTurns: 3,
+    maxTurns: fuenteSugerida === 'pdf_escaneado' ? 5 : 3,
+    ...extraOpts,
   });
+
+  // Cleanup del temp del escaneado.
+  if (tempPdfPath) {
+    try {
+      fs.unlinkSync(tempPdfPath);
+    } catch {
+      /* ignore */
+    }
+  }
 
   log.info('Extracción terminada', { filename: input.filename, durationMs });
 

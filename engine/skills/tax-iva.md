@@ -162,3 +162,38 @@ Tu respuesta es un JSON corto:
 - ❌ "Azúcar = 0% canasta básica" → vi azúcar Don Harris empacada al 1%. Confiá en la factura.
 
 La regla universal: **la factura manda, vos reconciliás aritméticamente**.
+
+## Herramientas MCP disponibles (Fase 2)
+
+A partir de Fase 2 tenés acceso a herramientas in-process del motor. Llamalas por nombre cuando las necesites — no tirés excepción inventando datos.
+
+### MCP `hacienda-cr` (API pública de Hacienda CR, sin auth)
+
+- **`mcp__hacienda-cr__obtener_tipo_cambio({ fecha?, moneda })`**
+  - Si la factura es USD o EUR, llamala con `fecha = factura.fecha_emision` y `moneda`. La herramienta retrocede automáticamente día por día si la fecha era un día no hábil.
+  - Devuelve `{ moneda, compra, venta, fecha_solicitada, fecha_vigente, fuente }`.
+  - Para asentar el `tipo_cambio` en la factura, usá `venta` (es el oficial para compras).
+  - Si tira error → `requiere_revision_humana: true` con motivo `TIPO_CAMBIO_NO_DISPONIBLE`.
+
+- **`mcp__hacienda-cr__tipo_cambio_actual({ moneda })`** — alias de la anterior con fecha = hoy.
+
+- **`mcp__hacienda-cr__validar_cedula({ cedula })`**
+  - Devuelve `{ encontrada, nombre, estado: 'inscrito'|'inactivo'|'no_encontrada', motivo_estado, actividad_economica, actividades }`.
+  - **No tira excepción** si la cédula no existe: simplemente `encontrada: false`.
+  - Mapeo a `motivo_revision`:
+    - `encontrada: false` → `CEDULA_NO_REGISTRADA`
+    - `estado: 'inactivo'` → `CEDULA_INACTIVA`
+    - `estado: 'inscrito'` → OK, no marcar revisión.
+
+- **`mcp__hacienda-cr__consultar_cabys({ codigo?, q? })`** — útil si querés verificar la tarifa legal de un producto contra el catálogo oficial. NO sobreescribas la tarifa marcada por el proveedor con esto: la factura sigue siendo el documento legal.
+
+### MCP `fwd-db` (acceso de SOLO lectura a la base local)
+
+- **`mcp__fwd-db__query({ sql })`** — ejecutá SELECT (o WITH ... SELECT). Cualquier INSERT/UPDATE/DELETE tira error.
+- **`mcp__fwd-db__describe_schema()`** — devuelve tablas, vistas y columnas. Usalo si dudás contra qué columna consultar.
+- **`mcp__fwd-db__registrar_procesamiento({ factura_id, agente, evento, detalle, duracion_ms })`** — escribe en `procesamientos` para auditoría. Usalo opcionalmente para dejar traza de decisiones no triviales.
+
+### Restricciones
+
+- La **escritura de la factura misma** (tablas `facturas` y `lineas_factura`) la hace el motor automáticamente DESPUÉS de tu respuesta. NO intentés persistir vos directamente.
+- Si una herramienta MCP falla, **no inventés el dato**: marcá `requiere_revision_humana: true` con el motivo apropiado y dejá el campo en `null` o el último valor conocido.

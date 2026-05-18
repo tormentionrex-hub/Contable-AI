@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createSubagent, defaultSkillPath, type Subagent } from './claude.js';
+import { buildHaciendaMcp } from './mcp/hacienda-cr.js';
+import { buildFwdDbMcp } from './mcp/fwd-db.js';
 import { validateFactura, getSchema } from '../lib/validator.js';
 import { getDb } from '../lib/db.js';
 import {
@@ -19,7 +21,14 @@ import type {
 let _agent: Subagent | null = null;
 function getAgent(): Subagent {
   if (!_agent) {
-    _agent = createSubagent({ name: 'tax-iva', skillPath: defaultSkillPath('tax-iva.md') });
+    _agent = createSubagent({
+      name: 'tax-iva',
+      skillPath: defaultSkillPath('tax-iva.md'),
+      mcpServers: {
+        'hacienda-cr': buildHaciendaMcp(),
+        'fwd-db': buildFwdDbMcp(),
+      },
+    });
   }
   return _agent;
 }
@@ -190,10 +199,12 @@ function coerceFacturaEnvelope(maybe: unknown, original: FacturaSchemaJson): Fac
 function buildPrompt(args: { factura: FacturaSchemaJson; empresa: { id: string; nombre: string } }): string {
   return [
     `Sos el agente Tax-IVA. Recibís una factura ya extraída por DocScan y debés:`,
-    `1. Clasificar la tarifa de IVA por línea (\`tarifa_iva_inferida\`).`,
-    `2. Calcular \`base_imponible\` e \`iva_calculado\` por línea.`,
-    `3. Reconciliar contra el pie (totales.iva_por_tarifa, totales.iva_total, totales.total_factura).`,
-    `4. Devolver { factura, resumen } donde \`factura\` es la misma factura enriquecida.`,
+    `1. Si la moneda NO es CRC, obtener tipo de cambio vigente con \`mcp__hacienda-cr__obtener_tipo_cambio\` (pasale la fecha_emision y la moneda). Setealo en \`factura.tipo_cambio\`.`,
+    `2. Validar la cédula del proveedor con \`mcp__hacienda-cr__validar_cedula\`. Si la respuesta tiene \`encontrada: false\`, marcá \`requiere_revision_humana: true\` con motivo \`CEDULA_NO_REGISTRADA\`. Si \`estado: 'inactivo'\`, motivo \`CEDULA_INACTIVA\`.`,
+    `3. Clasificar la tarifa de IVA por línea (\`tarifa_iva_inferida\`).`,
+    `4. Calcular \`base_imponible\` e \`iva_calculado\` por línea.`,
+    `5. Reconciliar contra el pie (totales.iva_por_tarifa, totales.iva_total, totales.total_factura).`,
+    `6. Devolver { factura, resumen } donde \`factura\` es la misma factura enriquecida.`,
     ``,
     `Empresa cliente activa: ${args.empresa.nombre} (id=${args.empresa.id}).`,
     ``,
@@ -201,7 +212,9 @@ function buildPrompt(args: { factura: FacturaSchemaJson; empresa: { id: string; 
     `- Si la factura marca tarifa (\`tarifa_iva_marcada != null\`), copiala a \`tarifa_iva_inferida\`. No la sobreescribas.`,
     `- Si no marca, inferí aritméticamente con tolerancia ±0.5%. Si no encaja en {0,1,2,4,13}, marcá \`requiere_revision_humana: true\` y motivo \`TARIFA_NO_RECONOCIBLE\`.`,
     `- NO modifiqués el JSON de la factura más allá de los campos que estás llenando.`,
-    `- En Fase 1 NO consultes BCCR ni Hacienda. Si moneda = "CRC", asumí tipo_cambio = 1.`,
+    `- Si moneda = "CRC", asumí tipo_cambio = 1 (no llames a Hacienda).`,
+    `- Si \`mcp__hacienda-cr__obtener_tipo_cambio\` falla, marcá \`requiere_revision_humana: true\` con motivo \`TIPO_CAMBIO_NO_DISPONIBLE\` y dejá \`tipo_cambio: null\`.`,
+    `- Tenés acceso opcional a \`mcp__fwd-db__query\` (SELECT-only) y \`mcp__fwd-db__describe_schema\` por si necesitás verificar historial. NO los uses para escritura — el motor persiste solo.`,
     `- Devolvé \`status\`:`,
     `   - "ok" si todo cuadró`,
     `   - "revision_humana" si marcaste algún motivo en la factura`,
