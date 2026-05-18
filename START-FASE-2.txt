@@ -9,24 +9,42 @@ NO me preguntes cosas que ya están en esos archivos. Si dudás de algo que NO e
 OBJETIVO DE FASE 2
 
 Conectar el motor con el mundo externo:
-- 3 MCPs custom: bccr (tipo cambio), hacienda-cr (padrón + estado factura), fwd-db (queries SQL).
+- 2 MCPs custom: hacienda-cr (tipo cambio + padrón + estado factura) y fwd-db (queries SQL). Sin BCCR.
 - Google Sheets como vista del contador: crear el machote y escribir desde Tax-IVA.
 - Splitter de PDFs multi-factura (que el caso "Caja Chica Santa Ana" deje de estar en skip).
 - Vision real para PDFs escaneados (pasar el PDF binario al sub-agente cuando pdf-parse no extrae texto).
 
-Resultado: cuando el contador sube una factura, el sistema valida cédula contra Hacienda, convierte moneda si hace falta, escribe en el Google Sheet con el formato correcto, y persiste en SQLite. Todo automático.
+Resultado: cuando el contador sube una factura, el sistema valida cédula contra Hacienda, convierte moneda si hace falta vía Hacienda (con fallback a APIs públicas sin key), escribe en el Google Sheet con el formato correcto, y persiste en SQLite. Todo automático.
 
-PRE-REQUISITOS QUE EL USUARIO YA TE DEJÓ EN .env
+DECISIÓN: SIN BCCR
 
-El usuario ya completó dos registros externos antes de lanzarte. En `engine/.env` ya están las variables:
+En Fase 1 se reservaron las variables BCCR_NOMBRE/EMAIL/TOKEN. En Fase 2 las eliminamos porque la API pública del Ministerio de Hacienda CR (api.hacienda.go.cr) ofrece tipo de cambio USD/EUR oficial sin registro, sin token y sin variables de entorno. Endpoints relevantes:
 
-- BCCR_NOMBRE, BCCR_EMAIL, BCCR_TOKEN (registro gratuito en https://gee.bccr.fi.cr/Indicadores/Suscripciones/WS/wsindicadoreseconomicos.asmx).
+- GET https://api.hacienda.go.cr/indicadores/tc        → { dolar: {compra,venta}, euro: {colones,dolares} }
+- GET https://api.hacienda.go.cr/indicadores/tc/dolar  → { compra: {fecha,valor}, venta: {fecha,valor} }
+- GET https://api.hacienda.go.cr/indicadores/tc/dolar/historico?d=YYYY-MM-DD&h=YYYY-MM-DD
+- GET https://api.hacienda.go.cr/fe/ae?identificacion=3006696489 → { nombre, regimen, situacion, actividades }
+- GET https://api.hacienda.go.cr/fe/cabys?codigo=... o ?q=texto
+
+Límites: 20 req/seg en ráfagas, 10 req/seg sostenido. Implementá retry con backoff y cache (tablas tipo_cambio_cache + cedulas_cache). El padrón se cachea 30 días; el tipo de cambio del día se cachea hasta las 23:59 de ese día.
+
+Como fallback gratuito de tipo de cambio si Hacienda falla:
+- https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json (sin key, hosted CDN)
+- https://api.frankfurter.dev/v1/latest?from=USD&to=CRC (sin key)
+Implementá el fallback solo si el endpoint primario devuelve 5xx o timeout dos veces consecutivas.
+
+PRE-REQUISITO QUE EL USUARIO YA TE DEJÓ EN .env
+
+El usuario ya completó el registro de Google. En `engine/.env` ya están las variables:
+
 - GOOGLE_SERVICE_ACCOUNT_JSON (path al .json de la Service Account en credentials/).
-- GOOGLE_SHEET_ID_FUNDACION_CRC (el Sheet del cliente piloto - puede venir vacío si el usuario quiere que vos lo crees programáticamente).
+- GOOGLE_SHEET_ID_FUNDACION_CRC (puede venir vacío; si está vacío, creá el Sheet vos mismo en el primer arranque).
+- CONTADOR_EMAIL (email del contador para compartirle el Sheet creado).
 
 Si alguna variable falta o está vacía:
-- BCCR_*: lanzá un error claro al arrancar el server pidiendo que se complete .env. NO simulés respuestas falsas.
-- GOOGLE_SHEET_ID_FUNDACION_CRC vacío: creá el Sheet vos mismo con la Sheets API (ver paso 8), guardá el ID en .env o en la tabla empresas, y avisalo en el reporte final.
+- GOOGLE_SERVICE_ACCOUNT_JSON: lanzá un error claro al boot indicando dónde poner el archivo (credentials/google-service-account.json).
+- GOOGLE_SHEET_ID_FUNDACION_CRC vacío: creá el Sheet con la Sheets API (paso 8), guardá el ID en la tabla empresas, y reportalo al final.
+- CONTADOR_EMAIL vacío: no compartas el Sheet; solo logueá el ID con WARN.
 
 CRITERIOS DE ACEPTACIÓN
 
@@ -35,8 +53,8 @@ Al terminar, estos comandos deben funcionar sin errores:
 1. cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine" ; npm install
 2. npm run dev (motor sigue arrancando como en Fase 1)
 3. curl http://localhost:3000/health (sigue devolviendo ok)
-4. curl http://localhost:3000/bccr/tc?fecha=2025-05-15 (devuelve { compra: ..., venta: ..., fecha: ... } leyendo del MCP)
-5. curl http://localhost:3000/hacienda/cedula/3006696489 (devuelve estado de la cédula en el padrón vía MCP)
+4. curl http://localhost:3000/hacienda/tc?moneda=USD (devuelve { compra, venta, fecha, fuente: 'hacienda' | 'cache' | 'fallback' } leyendo del MCP)
+5. curl http://localhost:3000/hacienda/cedula/3006696489 (devuelve { nombre: 'FUNDACION CRC ENDURANCE', estado: 'inscrito', actividades: [...] })
 6. curl -F "file=@tests/fixtures/50626112500310200722315100046010000285222100000000.pdf" -F "empresa_id=3006696489" http://localhost:3000/process-document
    - Devuelve 200 con { factura, resumen, sheet: { hojas_escritas: ['Reintegro Caja Chica', 'Detalle Hacienda'], filas: N } }
    - Al abrir el Google Sheet del cliente, las 2 hojas tienen las filas correctas con el formato del machote.
@@ -46,7 +64,8 @@ RESTRICCIONES DURAS (de CLAUDE.md)
 
 - Cero Python, cero binarios externos.
 - Cero `git push`. Solo commits locales.
-- Solo librerías ya en CLAUDE.md §13. Si necesitás `@modelcontextprotocol/sdk` para escribir los MCPs (oficial de Anthropic), agregalo al package.json y documentalo en el reporte. No usés otras.
+- CERO COSTO: no usar Anthropic API key paga. La autenticación sigue siendo la suscripción Claude Code Max plan del usuario. Tampoco usar servicios externos que pidan tarjeta.
+- Solo librerías ya en CLAUDE.md §13 + @modelcontextprotocol/sdk (oficial Anthropic) que vas a agregar para los MCPs. Documentá la versión en el reporte.
 - NO reescribas skills (engine/skills/*.md). Solo agregales reglas si la fase lo requiere (ej. en tax-iva.md, mencionar las nuevas herramientas MCP disponibles).
 - NO romper los tests existentes de Fase 1. Si necesitás cambiarlos, justificá en el reporte.
 
@@ -57,64 +76,61 @@ PASO 1 — Validar lectura del contexto
 - Marcá Fase 2 in_progress con TodoWrite y arrancá.
 
 PASO 2 — Validar pre-requisitos en .env
-- En src/config.ts, ampliá el schema zod para validar las variables nuevas: BCCR_NOMBRE, BCCR_EMAIL, BCCR_TOKEN, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEET_ID_FUNDACION_CRC (este último opcional).
-- Si BCCR_* faltan, error fatal al boot.
+- En src/config.ts, ampliá el schema zod para validar GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SHEET_ID_FUNDACION_CRC (opcional), CONTADOR_EMAIL (opcional).
 - Si GOOGLE_SERVICE_ACCOUNT_JSON apunta a un path que no existe, error fatal con mensaje claro indicando dónde poner el archivo (credentials/google-service-account.json).
+- ELIMINÁ del schema (y del .env.example) las variables BCCR_* que sobraron de Fase 1.
 
 PASO 3 — Schema DB: agregar tabla y campos necesarios
 Editá engine/schemas/db.sql para incluir:
 - Campo `sheet_id TEXT` en tabla `empresas` (ID del Google Sheet de esa empresa).
-- Tabla `tipo_cambio_cache` (fecha PK, compra REAL, venta REAL, capturado TEXT) — para no llamar a BCCR varias veces el mismo día.
+- Tabla `tipo_cambio_cache` (fecha PK, moneda TEXT, compra REAL, venta REAL, fuente TEXT, capturado TEXT) — cache del TC. PRIMARY KEY (fecha, moneda).
 - Tabla `cedulas_cache` (cedula PK, tipo_cedula, nombre, estado, actividad_economica, consultado TEXT) — cache del padrón Hacienda con TTL de 30 días.
 - Tabla `adelantos_caja_chica` (id PK auto, empresa_id FK, monto_crc REAL, fecha_entrega TEXT, responsable TEXT, estado TEXT CHECK ('abierto','cerrado'), creado TEXT) — para el cálculo de saldo del P01.
-Re-correr `npm run db:init` y verificar que las migraciones aplicaron sin perder datos.
+Re-correr `npm run db:init` y verificar que las migraciones aplicaron sin perder datos (db.sql usa IF NOT EXISTS).
 
-PASO 4 — MCP server: bccr
-Crear mcp-servers/bccr/ con:
-- package.json (dependencias: @modelcontextprotocol/sdk, zod).
-- src/index.ts: servidor MCP stdio que expone 2 herramientas:
-  - obtener_tipo_cambio({ fecha: string, moneda: 'USD' | 'EUR' }) - hace request a https://gee.bccr.fi.cr/Indicadores/Suscripciones/WS/wsindicadoreseconomicos.asmx con indicador 317 (compra USD) y 318 (venta USD). Para EUR: 333 compra, 334 venta. Cachea en tipo_cambio_cache. Devuelve { compra, venta, fecha, fuente: 'bccr'|'cache' }.
-  - tipo_cambio_actual({ moneda }) - alias para fecha = HOY.
-- README.md explicando cómo arrancarlo standalone para debug.
-El MCP NO accede a SQLite directamente — recibe el path por env var o argumento.
-
-PASO 5 — MCP server: hacienda-cr
+PASO 4 — MCP server: hacienda-cr
 Crear mcp-servers/hacienda-cr/ con:
-- src/index.ts con 2 herramientas:
-  - validar_cedula({ cedula: string }) - llama a https://api.hacienda.go.cr/fe/ae?identificacion={cedula}. Cachea en cedulas_cache con TTL 30 días. Devuelve { encontrada: bool, nombre, tipo_cedula, estado: 'activo'|'inactivo'|'no_encontrado', actividad_economica }.
-  - consultar_factura({ clave_numerica: string }) - llama al endpoint de estado de FE de Hacienda. Si falla auth o no se puede llamar sin token, devolvé { estado: 'no_consultado', motivo: 'auth_pendiente' } sin tirar.
-- Sin cargos al usuario: el endpoint del padrón es público.
+- package.json (dependencias: @modelcontextprotocol/sdk v1.x, zod).
+- src/index.ts: servidor MCP stdio que expone 4 herramientas:
+  - obtener_tipo_cambio({ fecha?: string, moneda: 'USD' | 'EUR' }) — si fecha está vacía o es hoy, llama a GET /indicadores/tc/dolar (o /euro). Si es fecha pasada, llama a /historico?d=fecha&h=fecha. Cachea. Devuelve { compra, venta, fecha, moneda, fuente: 'hacienda' | 'cache' | 'fallback' }.
+  - tipo_cambio_actual({ moneda }) — alias para fecha = HOY.
+  - validar_cedula({ cedula: string }) — GET /fe/ae?identificacion={cedula}. Cachea 30 días. Devuelve { encontrada: bool, nombre, tipo_identificacion, estado: 'inscrito'|'no_inscrito'|'no_encontrada', actividades: [{ codigo, descripcion, estado }] }.
+  - consultar_cabys({ codigo?: string, q?: string }) — GET /fe/cabys. Útil futuro.
+- Implementá retry con backoff (2 reintentos, 500ms y 2000ms) y fallback a Fawaz/Frankfurter SOLO para tipo_cambio_actual cuando Hacienda devuelva 5xx/timeout dos veces seguidas.
+- README.md explicando cómo arrancarlo standalone para debug.
+- El MCP NO accede a SQLite directamente — recibe el path por env var DB_PATH y usa better-sqlite3.
 
-PASO 6 — MCP server: fwd-db
+PASO 5 — MCP server: fwd-db
 Crear mcp-servers/fwd-db/ con:
 - src/index.ts con herramientas:
-  - query({ sql: string }) - SOLO acepta SELECT (regex de seguridad al inicio). Devuelve filas como array.
-  - describe_schema() - devuelve estructura de tablas/vistas/columnas para que el Asistente Contable de Fase 3 sepa contra qué consultar.
-  - insertar_factura({ factura, lineas }) - escribe en tablas facturas + lineas_factura. Idempotente por clave_numerica.
-  - registrar_procesamiento({ factura_id, agente, evento, detalle_json, duracion_ms }) - escribe en tabla procesamientos.
+  - query({ sql: string }) — SOLO acepta SELECT (regex de seguridad al inicio). Devuelve filas como array.
+  - describe_schema() — devuelve estructura de tablas/vistas/columnas para que el Asistente Contable de Fase 3 sepa contra qué consultar.
+  - insertar_factura({ factura, lineas }) — escribe en tablas facturas + lineas_factura. Idempotente por clave_numerica.
+  - registrar_procesamiento({ factura_id, agente, evento, detalle_json, duracion_ms }) — escribe en tabla procesamientos.
 - Modo: el MCP recibe el path del .db por env DB_PATH.
 
-PASO 7 — Integrar los 3 MCPs en el motor
-- En engine/src/agents/claude.ts, exponé un nuevo parámetro `mcpServers` en createSubagent. El Agent SDK soporta MCPs vía configuración stdio.
-- Cambiá engine/src/agents/tax-iva.ts para que el sub-agente Tax-IVA tenga acceso a los 3 MCPs (bccr, hacienda-cr, fwd-db).
+PASO 6 — Integrar los 2 MCPs en el motor
+- En engine/src/agents/claude.ts, exponé un nuevo parámetro `mcpServers` en createSubagent. El Agent SDK ya soporta MCPs vía configuración stdio.
+- Cambiá engine/src/agents/tax-iva.ts para que el sub-agente Tax-IVA tenga acceso a los 2 MCPs (hacienda-cr, fwd-db).
 - Actualizá engine/skills/tax-iva.md (con cuidado, mínimo necesario) para mencionar que las herramientas están disponibles y cómo usarlas. NO reescribas el skill; agregá una sección "Herramientas MCP disponibles" al final.
+- IMPORTANTE: la mención a BCCR en tax-iva.md (paso 1 del pipeline) se reemplaza por Hacienda. Editá esa parte específica con cuidado.
 
-PASO 8 — Google Sheets: Service Account + creación del machote
+PASO 7 — Google Sheets: Service Account + creación del machote
 - Crear engine/src/lib/sheets.ts:
-  - initSheetsClient() - usa googleapis con el JSON de Service Account.
-  - createMachote(empresa) - crea un nuevo Spreadsheet con 4 hojas (Reintegro Caja Chica, Detalle Hacienda, Resumen por Tarifa, Para Revisión) siguiendo EXACTAMENTE engine/schemas/sheet-layout.md. Aplica formato (colores, headers, fórmulas SUMIF, formatos de moneda CRC). Comparte el Sheet con el email del contador (variable .env opcional COUNTADOR_EMAIL; si no está, no comparte y deja el ID en logs).
-  - appendFactura(sheetId, factura) - escribe en Hoja 1 y Hoja 2 siguiendo la regla de agrupación (una fila por tarifa en Hoja 1; una fila por factura en Hoja 2). Idempotente: si la clave_numerica ya está en la columna de Hoja 2, hace update en lugar de append.
-  - markRevision(sheetId, factura, motivo) - copia la fila a Hoja 4 con el motivo traducido a español humano.
-- En el primer boot (o con npm run sheets:setup que vas a crear), si la empresa FUNDACION CRC Endurance no tiene sheet_id en la tabla, llamar createMachote, guardar el ID, y compartirlo.
+  - initSheetsClient() — usa googleapis con el JSON de Service Account.
+  - createMachote(empresa) — crea un nuevo Spreadsheet con 4 hojas (Reintegro Caja Chica, Detalle Hacienda, Resumen por Tarifa, Para Revisión) siguiendo EXACTAMENTE engine/schemas/sheet-layout.md. Aplica formato (colores, headers, fórmulas SUMIF, formatos de moneda CRC). Comparte el Sheet con el email del contador (variable .env CONTADOR_EMAIL; si no está, no comparte y deja el ID en logs).
+  - appendFactura(sheetId, factura) — escribe en Hoja 1 y Hoja 2 siguiendo la regla de agrupación (una fila por tarifa en Hoja 1; una fila por factura en Hoja 2). Idempotente: si la clave_numerica ya está en la columna de Hoja 2, hace update en lugar de append.
+  - markRevision(sheetId, factura, motivo) — copia la fila a Hoja 4 con el motivo traducido a español humano.
+- En el primer boot (o con `npm run sheets:setup` que vas a crear), si la empresa FUNDACION CRC Endurance no tiene sheet_id en la tabla, llamar createMachote, guardar el ID, y compartirlo.
 
-PASO 9 — Integrar Sheets en el flujo de process-document
+PASO 8 — Integrar Sheets en el flujo de process-document
 - Modificar engine/src/routes/process-document.ts para que después de enrichFactura llame a appendFactura.
 - Si la factura tiene requiere_revision_humana=true, llamar markRevision adicionalmente.
 - Añadir al response del endpoint: { sheet: { sheet_id, filas_escritas: { ... } } }.
 
-PASO 10 — Splitter de PDFs multi-factura (caso Caja Chica)
+PASO 9 — Splitter de PDFs multi-factura (caso Caja Chica)
 - Crear engine/src/lib/pdf-split.ts:
-  - splitMultiInvoicePdf(buffer) - usa pdf-parse para extraer texto página por página. Heurística: detectar inicio de nueva factura por patrones (palabras "Factura Electrónica", "FACTURA ELECTRONICA", cambio brusco de proveedor, claves numéricas de 50 dígitos consecutivos). Devuelve array de buffers (uno por factura).
+  - splitMultiInvoicePdf(buffer) — usa pdf-parse para extraer texto página por página. Heurística: detectar inicio de nueva factura por patrones (palabras "Factura Electrónica", "FACTURA ELECTRONICA", cambio brusco de proveedor, claves numéricas de 50 dígitos consecutivos). Devuelve array de buffers (uno por factura).
   - Si no detecta múltiples facturas, devuelve [buffer_original].
 - Modificar engine/src/routes/process-document.ts:
   - Después de recibir el archivo, si es PDF, correr splitMultiInvoicePdf primero.
@@ -122,44 +138,45 @@ PASO 10 — Splitter de PDFs multi-factura (caso Caja Chica)
   - Si devuelve 1, comportamiento original.
 - Reactivar el test de Caja Chica Santa Ana en docscan.test.ts: ahora debe pasar con N facturas detectadas (al menos 5; el ground truth es 7 sub-facturas pero algunas son del mismo proveedor en mismo día).
 
-PASO 11 — Vision real para PDFs escaneados
+PASO 10 — Vision real para PDFs escaneados
 - Modificar engine/src/lib/pdf-extract.ts: si pdf-parse no extrae texto o extrae basura (criterio: < 50 chars o ratio de caracteres ASCII < 0.7), retornar { isScanned: true, pdfBuffer: Buffer } sin intentar conversión a PNG.
 - Modificar engine/src/agents/docscan.ts: si isScanned=true, pasar el PDF binario como adjunto tipo `document` al sub-agente (el Agent SDK soporta documentos vía `content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }]`).
 - Caso de prueba: la página 4 del Caja Chica Santa Ana (Market Río Oro con anotación a lápiz) debe ahora extraerse con confianza_extraccion <= 0.6 y motivo_revision = 'OCR_DEGRADADO' (no falla, pero pide revisión).
 
-PASO 12 — Endpoints auxiliares de cara a n8n (Fase 4)
+PASO 11 — Endpoints auxiliares de cara a n8n (Fase 4)
 Crear:
-- GET /bccr/tc?fecha=YYYY-MM-DD&moneda=USD - wrapper sobre MCP bccr para debug.
-- GET /hacienda/cedula/:cedula - wrapper sobre MCP hacienda-cr.
-- GET /facturas?empresa_id=X&mes=YYYY-MM - lista facturas de la empresa en ese mes (lectura directa de SQLite).
-- GET /facturas/:id - detalle de una factura.
-- POST /adelantos - crea un adelanto de caja chica (P01 saldo).
-- GET /caja-chica/saldo?empresa_id=X - calcula saldo = sum(adelantos abiertos) - sum(facturas del periodo). Devuelve { adelanto, facturas, saldo }.
+- GET /hacienda/tc?moneda=USD|EUR&fecha=YYYY-MM-DD — wrapper sobre MCP hacienda-cr (tipo cambio).
+- GET /hacienda/cedula/:cedula — wrapper sobre MCP hacienda-cr (padrón).
+- GET /facturas?empresa_id=X&mes=YYYY-MM — lista facturas de la empresa en ese mes (lectura directa de SQLite).
+- GET /facturas/:id — detalle de una factura.
+- POST /adelantos — crea un adelanto de caja chica (P01 saldo).
+- GET /caja-chica/saldo?empresa_id=X — calcula saldo = sum(adelantos abiertos) - sum(facturas del periodo). Devuelve { adelanto, facturas, saldo }.
 
-PASO 13 — Tests
-- Actualizar tests/docscan.test.ts: desk-skip Caja Chica Santa Ana, agregarle aserciones (>=5 facturas detectadas, totales esperados de cada una según engine/tests/fixtures/README.md).
+PASO 12 — Tests
+- Actualizar tests/docscan.test.ts: des-skip Caja Chica Santa Ana, agregarle aserciones (>=5 facturas detectadas, totales esperados de cada una según engine/tests/fixtures/README.md).
 - Nuevo tests/sheets.test.ts (unitario, NO toca Google real): mockea googleapis y verifica que appendFactura genera las filas correctas con la regla de agrupación por tarifa.
-- Nuevo tests/mcp-bccr.test.ts (con cache habilitado para no hacer red real): inserta un TC manual en tipo_cambio_cache y verifica que el MCP lo devuelve sin pegarle a BCCR.
+- Nuevo tests/mcp-hacienda.test.ts (con cache habilitado para no hacer red real): inserta un TC manual en tipo_cambio_cache y verifica que el MCP lo devuelve sin pegarle a Hacienda. Otro caso: stubbea fetch para devolver 503 y verifica que cae al fallback.
 - Nuevo tests/pdf-split.test.ts: con el PDF de Caja Chica, verifica que splitMultiInvoicePdf detecta al menos 5 facturas.
 
-PASO 14 — Validación end-to-end
+PASO 13 — Validación end-to-end
 - Corré los 7 criterios de aceptación en orden. Todos deben pasar.
 - Si npm test pasa pero la integración con Sheets real falla, documentá en el reporte qué error apareció y dejá el sistema usable con un fallback (escribir solo a SQLite, marcar la factura como pendiente de sync).
 
-PASO 15 — Commit local
+PASO 14 — Commit local
 - git add -A
-- git commit con mensaje del estilo: "Fase 2: MCPs BCCR/Hacienda/fwd-db + Google Sheets + splitter multi-factura"
+- git commit con mensaje del estilo: "Fase 2: MCPs Hacienda/fwd-db + Google Sheets + splitter multi-factura"
 - NO hacer git push.
 
-PASO 16 — Reporte
+PASO 15 — Reporte
 Generar docs/FASE-2-REPORTE.md con:
-- Qué se construyó (3 MCPs + Sheets + splitter + vision).
+- Qué se construyó (2 MCPs + Sheets + splitter + vision).
 - Cómo arrancar (incluye instrucciones para inicializar el Sheet la primera vez).
 - Resultado de npm test (con el Caja Chica ahora pasando).
 - ID del Google Sheet creado (para que el usuario lo abra y verifique).
 - Tiempos de respuesta de /process-document end-to-end (probablemente sube a 25-40s con la escritura a Sheets).
 - TODOs pendientes para Fase 3.
-- Notas sobre cualquier librería agregada (@modelcontextprotocol/sdk si la usaste).
+- Notas sobre cualquier librería agregada (@modelcontextprotocol/sdk).
+- Confirmar que Fase 2 corrió con costo $0 en APIs externas.
 
 COSAS QUE QUEDAN PARA FASES SIGUIENTES (NO LAS HAGAS AHORA)
 
@@ -172,7 +189,7 @@ COSAS QUE QUEDAN PARA FASES SIGUIENTES (NO LAS HAGAS AHORA)
 ESTILO DE CÓDIGO
 
 - Mantené el estándar de Fase 1: TypeScript estricto, ESM imports, async/await, errores tipados en src/lib/errors.ts, logs con winston (no console.log).
-- Nuevas clases de error que probablemente vas a necesitar: BCCRError, HaciendaError, SheetsError, MCPError, SplitterError.
+- Nuevas clases de error que probablemente vas a necesitar: HaciendaError, SheetsError, MCPError, SplitterError.
 - Los MCPs son procesos separados — sus logs van a stderr, no contaminan el log del motor.
 
 EMPEZÁ AHORA. Si la documentación oficial del Agent SDK sobre MCPs te confunde, consultá la doc oficial (anthropic.com / docs.claude.com) con WebFetch antes de improvisar. Al final mostrame el output de `npm test` y el reporte.

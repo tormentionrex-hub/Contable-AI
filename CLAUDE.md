@@ -106,8 +106,7 @@ Le toma **horas por semana**. El sistema debe ser **100 % funcional, no demo** �
 |  CAPA 3 — Tools y Storage                                       |
 |                                                                 |
 |  MCP servers custom (en mcp-servers/):                          |
-|   - mcp-bccr         -> tipo de cambio BCCR                     |
-|   - mcp-hacienda-cr  -> padrón cédulas + estado factura         |
+|   - mcp-hacienda-cr  -> tipo cambio + padrón cédulas + CABYS    |
 |   - mcp-fwd-db       -> queries SQL SQLite (lectura/escritura)  |
 |                                                                 |
 |  MCP server oficial:                                            |
@@ -140,10 +139,10 @@ Tomados del documento "Ejercicios del Taller de Contabilidad — Randall Leiton 
 - Procesar facturas PDF (escaneadas) y XML (Hacienda CR).
 - Clasificar cada línea según las 6 tarifas de IVA: 0 %, 1 %, 2 %, 4 %, 13 %, Exento.
 - Excel multihoja: Hoja 1 detalle con 24 columnas oficiales de Hacienda + Hoja 2 resumen por tarifa.
-- Multimoneda con tipo de cambio BCCR.
+- Multimoneda con tipo de cambio oficial vía API pública de Hacienda CR (sin auth).
 - Frontend: panel de carga PDF/XML, detalle por factura, resumen por tarifa, descarga Excel.
 - IA: identificar categoría fiscal, calcular base/IVA/total por línea, reconciliar, detectar inconsistencias.
-- **Extras**: notas crédito/débito, historial, exportar PDF, alertas IVA incorrecto, API BCCR real-time.
+- **Extras**: notas crédito/débito, historial, exportar PDF, alertas IVA incorrecto, fallback gratuito de TC (jsdelivr/frankfurter).
 
 ### Proyecto 03 — Smart Accounting AI
 
@@ -377,6 +376,17 @@ Usar **Claude Agent SDK** autenticado con la suscripción Claude Code Max plan d
 
 Config: `CLAUDE_AUTH_MODE=claude_code` en `.env`.
 
+### Servicios externos: TODOS gratuitos, sin tarjeta
+
+El presupuesto en APIs externas es **$0**. Las únicas dependencias online son:
+
+- **Claude** → suscripción Claude Code Max plan del usuario (sin API key paga).
+- **Hacienda CR** (`api.hacienda.go.cr`) → API pública oficial, sin auth, sin token, sin registro. Cubre tipo de cambio USD/EUR, padrón de contribuyentes y CABYS. Probada en vivo 2026-05-17. Límites: 10 req/seg sostenido, 20 ráfaga (cómodo para uso real).
+- **Google Sheets API / Drive API** → free tier permanente, 300 reads/min, sin tarjeta requerida para Service Account. Nuestro uso real es < 10 escrituras/día.
+- **Fallback de TC** (solo si Hacienda devuelve 5xx) → `cdn.jsdelivr.net/npm/@fawazahmed0/currency-api` y `api.frankfurter.dev`, ambos sin key.
+
+**BCCR queda descartado** (originalmente listado en Fase 2): aunque su web service es gratis, requiere registro + token por email + variable en `.env`, lo que en la práctica frena el flujo de setup. Hacienda CR ofrece lo mismo sin esos pasos. Si alguna vez se necesita una fuente alternativa, BCCR sigue disponible — pero no es la primaria.
+
 ### Base de datos
 
 **SQLite** vía `better-sqlite3`. Archivo en `engine/data/fwd-contable.db`. Schema en `engine/schemas/db.sql`.
@@ -495,7 +505,7 @@ Output esperado:
 
 ### Fase 2 — Pendiente
 
-- MCPs: bccr, hacienda-cr, fwd-db.
+- MCPs: hacienda-cr (TC + padrón + CABYS, sin auth), fwd-db.
 - Service Account Google + Sheet creado.
 - Escritura a Sheets desde Tax-IVA.
 
