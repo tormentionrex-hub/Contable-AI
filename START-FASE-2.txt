@@ -22,6 +22,7 @@ En Fase 1 se reservaron las variables BCCR_NOMBRE/EMAIL/TOKEN. En Fase 2 las eli
 
 - GET https://api.hacienda.go.cr/indicadores/tc        → { dolar: {compra,venta}, euro: {colones,dolares} }
 - GET https://api.hacienda.go.cr/indicadores/tc/dolar  → { compra: {fecha,valor}, venta: {fecha,valor} }
+- GET https://api.hacienda.go.cr/indicadores/tc/euro   → { fecha, dolares, colones }  (FORMATO DISTINTO — ver detalles abajo)
 - GET https://api.hacienda.go.cr/indicadores/tc/dolar/historico?d=YYYY-MM-DD&h=YYYY-MM-DD
 - GET https://api.hacienda.go.cr/fe/ae?identificacion=3006696489 → { nombre, regimen, situacion, actividades }
 - GET https://api.hacienda.go.cr/fe/cabys?codigo=... o ?q=texto
@@ -31,7 +32,31 @@ Límites: 20 req/seg en ráfagas, 10 req/seg sostenido. Implementá retry con ba
 Como fallback gratuito de tipo de cambio si Hacienda falla:
 - https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json (sin key, hosted CDN)
 - https://api.frankfurter.dev/v1/latest?from=USD&to=CRC (sin key)
+- https://api.frankfurter.dev/v1/latest?from=EUR&to=CRC (sin key, para EUR)
 Implementá el fallback solo si el endpoint primario devuelve 5xx o timeout dos veces consecutivas.
+
+COMPORTAMIENTO REAL DE LA API DE HACIENDA (verificado en vivo 2026-05-17)
+
+Estos puntos NO están en la documentación oficial pero los confirmé contra el endpoint real. Implementalos correctamente desde el inicio:
+
+1) `/indicadores/tc/dolar` devuelve el TC del DÍA HÁBIL ANTERIOR, no el de hoy. Hoy es 2026-05-17 (sábado) y devolvió fecha "2026-05-16" (viernes). Esto es correcto: el TC oficial se publica al cierre del día hábil. Implicación: la herramienta `obtener_tipo_cambio` DEBE aceptar un parámetro `fecha` (la fecha de emisión de la factura) y devolver el TC vigente en ese día. NO asumir "hoy" siempre — si la factura es del 14 de marzo, hay que buscar el TC del 14 de marzo (o el último hábil anterior si el 14 fue domingo).
+
+2) `/indicadores/tc/euro` tiene un FORMATO DISTINTO a `/indicadores/tc/dolar`. Devuelve `{ fecha, dolares: 1.162, colones: 529.42 }` — un solo valor, sin compra/venta separadas. `colones` es CRC por 1 EUR (= 529.42). `dolares` es USD por 1 EUR. El MCP debe normalizar la salida de ambas monedas al mismo shape antes de devolverla al motor:
+   - Para USD: `{ moneda: 'USD', compra: 449.17, venta: 455.61, fecha, fuente }`
+   - Para EUR: `{ moneda: 'EUR', compra: 529.42, venta: 529.42, fecha, fuente }`  (no hay spread documentado para EUR, usá el mismo valor en ambas)
+
+3) `/indicadores/tc/dolar/historico?d=X&h=X` devuelve `[]` (array vacío) cuando la fecha solicitada es un día sin TC publicado (fines de semana, feriados). La herramienta DEBE retroceder día por día (máximo 7 retrocesos) hasta encontrar un TC válido. Si tras 7 días no hay nada, devolver error claro `TIPO_CAMBIO_NO_DISPONIBLE`.
+
+4) `/fe/ae?identificacion=X` con cédula inexistente devuelve `{ code: 404, status: "Information no available..." }` con HTTP 404. La herramienta `validar_cedula` DEBE traducir esto a `{ encontrada: false, estado: 'no_encontrada' }` sin tirar excepción. El skill tax-iva.md ya contempla CEDULA_NO_REGISTRADA como motivo de revisión humana.
+
+5) `situacion.estado` puede tener variantes que NO son "Inscrito":
+   - "Inscrito" → mapeá a `estado: 'inscrito'`
+   - "Inscrito de Oficio" → mapeá a `estado: 'inactivo'` Y conservá `situacion.mensaje` que explica el problema. El skill tax-iva.md debe marcar la factura como CEDULA_INACTIVA en este caso.
+   - Cualquier otro valor → `estado: 'inactivo'` por seguridad.
+
+6) El campo `actividades` es un ARRAY de objetos `{ estado, tipo, codigo, descripcion }`, no un string. Decisión para Fase 2:
+   - En la tabla `proveedores`, el campo `actividad_economica TEXT` guarda SOLO la `descripcion` de la PRIMERA actividad con `estado: 'A'` (activa) y `tipo: 'P'` (principal). Si no hay ninguna principal activa, guardá la primera del array.
+   - En la tabla `cedulas_cache`, agregá un campo nuevo `actividades_json TEXT` que guarde `JSON.stringify(actividades)` completo, para que el Asistente Contable de Fase 3 pueda consultar todas si las pregunta.
 
 PRE-REQUISITO QUE EL USUARIO YA TE DEJÓ EN .env
 
@@ -53,7 +78,7 @@ Al terminar, estos comandos deben funcionar sin errores:
 1. cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine" ; npm install
 2. npm run dev (motor sigue arrancando como en Fase 1)
 3. curl http://localhost:3000/health (sigue devolviendo ok)
-4. curl http://localhost:3000/hacienda/tc?moneda=USD (devuelve { compra, venta, fecha, fuente: 'hacienda' | 'cache' | 'fallback' } leyendo del MCP)
+4. curl "http://localhost:3000/hacienda/tc?moneda=USD&fecha=2026-05-16" (devuelve { moneda, compra, venta, fecha_solicitada, fecha_vigente, fuente: 'hacienda'|'cache'|'fallback_*' }). Probar también con moneda=EUR para confirmar normalización del shape.
 5. curl http://localhost:3000/hacienda/cedula/3006696489 (devuelve { nombre: 'FUNDACION CRC ENDURANCE', estado: 'inscrito', actividades: [...] })
 6. curl -F "file=@tests/fixtures/50626112500310200722315100046010000285222100000000.pdf" -F "empresa_id=3006696489" http://localhost:3000/process-document
    - Devuelve 200 con { factura, resumen, sheet: { hojas_escritas: ['Reintegro Caja Chica', 'Detalle Hacienda'], filas: N } }
@@ -83,20 +108,59 @@ PASO 2 — Validar pre-requisitos en .env
 PASO 3 — Schema DB: agregar tabla y campos necesarios
 Editá engine/schemas/db.sql para incluir:
 - Campo `sheet_id TEXT` en tabla `empresas` (ID del Google Sheet de esa empresa).
-- Tabla `tipo_cambio_cache` (fecha PK, moneda TEXT, compra REAL, venta REAL, fuente TEXT, capturado TEXT) — cache del TC. PRIMARY KEY (fecha, moneda).
-- Tabla `cedulas_cache` (cedula PK, tipo_cedula, nombre, estado, actividad_economica, consultado TEXT) — cache del padrón Hacienda con TTL de 30 días.
+- Tabla `tipo_cambio_cache`:
+    fecha TEXT, moneda TEXT, compra REAL, venta REAL,
+    fecha_vigente TEXT (la fecha REAL que devolvió Hacienda — puede diferir si era no hábil),
+    fuente TEXT ('hacienda'|'fallback_fawaz'|'fallback_frankfurter'),
+    capturado TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (fecha, moneda)
+- Tabla `cedulas_cache`:
+    cedula TEXT PRIMARY KEY, tipo_identificacion TEXT, nombre TEXT,
+    estado TEXT CHECK (estado IN ('inscrito','inactivo','no_encontrada')),
+    motivo_estado TEXT,
+    actividad_economica TEXT,
+    actividades_json TEXT,
+    consultado TEXT DEFAULT (datetime('now'))
 - Tabla `adelantos_caja_chica` (id PK auto, empresa_id FK, monto_crc REAL, fecha_entrega TEXT, responsable TEXT, estado TEXT CHECK ('abierto','cerrado'), creado TEXT) — para el cálculo de saldo del P01.
 Re-correr `npm run db:init` y verificar que las migraciones aplicaron sin perder datos (db.sql usa IF NOT EXISTS).
+Importante: SQLite NO soporta `ALTER TABLE ... ADD COLUMN` con CHECK fácilmente. Si modificás `empresas` o `proveedores`, usá el patrón de tabla nueva + INSERT SELECT + DROP + RENAME en una transacción.
 
 PASO 4 — MCP server: hacienda-cr
 Crear mcp-servers/hacienda-cr/ con:
 - package.json (dependencias: @modelcontextprotocol/sdk v1.x, zod).
 - src/index.ts: servidor MCP stdio que expone 4 herramientas:
-  - obtener_tipo_cambio({ fecha?: string, moneda: 'USD' | 'EUR' }) — si fecha está vacía o es hoy, llama a GET /indicadores/tc/dolar (o /euro). Si es fecha pasada, llama a /historico?d=fecha&h=fecha. Cachea. Devuelve { compra, venta, fecha, moneda, fuente: 'hacienda' | 'cache' | 'fallback' }.
-  - tipo_cambio_actual({ moneda }) — alias para fecha = HOY.
-  - validar_cedula({ cedula: string }) — GET /fe/ae?identificacion={cedula}. Cachea 30 días. Devuelve { encontrada: bool, nombre, tipo_identificacion, estado: 'inscrito'|'no_inscrito'|'no_encontrada', actividades: [{ codigo, descripcion, estado }] }.
-  - consultar_cabys({ codigo?: string, q?: string }) — GET /fe/cabys. Útil futuro.
-- Implementá retry con backoff (2 reintentos, 500ms y 2000ms) y fallback a Fawaz/Frankfurter SOLO para tipo_cambio_actual cuando Hacienda devuelva 5xx/timeout dos veces seguidas.
+
+  • obtener_tipo_cambio({ fecha: string (YYYY-MM-DD, requerido), moneda: 'USD' | 'EUR' })
+      - Buscar primero en `tipo_cambio_cache` (clave compuesta fecha+moneda).
+      - Si no está, llamar a Hacienda. Si fecha == HOY → /indicadores/tc/{dolar|euro}.
+        Si fecha < HOY → /indicadores/tc/dolar/historico?d=fecha&h=fecha.
+      - Si la respuesta es `[]` (día no hábil), retroceder día a día hasta 7 retrocesos.
+        Devolver la respuesta encontrada con la `fecha_vigente` que se usó realmente.
+      - NORMALIZAR la salida USD vs EUR (ver punto 2 de "COMPORTAMIENTO REAL"):
+        return { moneda, compra, venta, fecha_solicitada, fecha_vigente, fuente: 'hacienda'|'cache'|'fallback' }
+      - Para EUR usar { compra: colones, venta: colones } (mismo valor en ambos).
+      - Cachear el resultado con TTL hasta las 23:59:59 del día.
+
+  • tipo_cambio_actual({ moneda: 'USD' | 'EUR' })
+      - Alias de obtener_tipo_cambio({ fecha: HOY, moneda }).
+
+  • validar_cedula({ cedula: string })
+      - Buscar primero en `cedulas_cache` (TTL 30 días).
+      - Si no está, llamar GET /fe/ae?identificacion={cedula}.
+      - Si HTTP 404 → devolver { encontrada: false, estado: 'no_encontrada' } SIN tirar excepción.
+      - Si HTTP 200 → mapear:
+          estado: 'Inscrito'            -> 'inscrito'
+          estado: 'Inscrito de Oficio'  -> 'inactivo' (y conservar situacion.mensaje en `motivo_estado`)
+          cualquier otro                 -> 'inactivo'
+        actividad_economica = primera actividad con (estado:'A', tipo:'P').descripcion, fallback a la primera del array.
+      - Persistir en cedulas_cache:
+          { cedula, nombre, tipo_identificacion, estado, actividad_economica, actividades_json: JSON.stringify(actividades), motivo_estado, consultado: NOW }
+      - Devolver { encontrada: true, nombre, tipo_identificacion, estado, actividad_economica, actividades_json, motivo_estado }.
+
+  • consultar_cabys({ codigo?: string, q?: string })
+      - GET /fe/cabys. Útil futuro, dejar implementado pero sin caché en Fase 2.
+
+- Implementá retry con backoff (2 reintentos, 500ms y 2000ms) y fallback a Fawaz/Frankfurter SOLO para obtener_tipo_cambio cuando Hacienda devuelva 5xx/timeout dos veces seguidas. Para EUR, Frankfurter usa from=EUR&to=CRC.
 - README.md explicando cómo arrancarlo standalone para debug.
 - El MCP NO accede a SQLite directamente — recibe el path por env var DB_PATH y usa better-sqlite3.
 
