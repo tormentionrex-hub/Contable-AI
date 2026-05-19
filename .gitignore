@@ -11,7 +11,7 @@ build/
 .env
 .env.local
 .env.*.local
-engine/.env
+backend/.env
 
 # Documentación de setup local que contiene el .env literal y emails personales.
 # Funcionalmente equivalente al .env — NUNCA subir.
@@ -28,7 +28,7 @@ hacienda-token*.json
 .scratch/
 
 # Storage local
-engine/data/
+backend/data/
 *.db
 *.db-journal
 *.db-wal

@@ -8,9 +8,9 @@
 Un motor Node.js + TypeScript funcional que:
 
 1. **Recibe un PDF o XML** vía `POST /process-document` (multipart/form-data) con el campo `empresa_id`.
-2. **Lo extrae con DocScan** (sub-agente Claude que aplica las reglas por dialecto del skill `engine/skills/docscan.md`).
+2. **Lo extrae con DocScan** (sub-agente Claude que aplica las reglas por dialecto del skill `backend/skills/docscan.md`).
 3. **Lo enriquece con Tax-IVA** (sub-agente Claude que infiere tarifa por línea, calcula base e IVA, reconcilia y persiste).
-4. **Valida** el JSON contra `engine/schemas/factura.schema.json` con Ajv 2020.
+4. **Valida** el JSON contra `backend/schemas/factura.schema.json` con Ajv 2020.
 5. **Persiste** la factura en SQLite (tabla `facturas` + `lineas_factura`), incluyendo proveedor en `proveedores`.
 6. **Devuelve** `{ factura, resumen }` al cliente.
 
@@ -24,7 +24,7 @@ Un motor Node.js + TypeScript funcional que:
 ### Archivos creados en Fase 1
 
 ```
-engine/
+backend/
 ├── package.json                      Deps de CLAUDE.md §13 + types
 ├── vitest.config.ts                  Config de tests
 ├── .env                              Copia de .env.example
@@ -57,7 +57,7 @@ engine/
 ## 2. Cómo arrancar
 
 ```powershell
-cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine"
+cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\backend"
 npm install
 Copy-Item .env.example .env
 npm run db:init
@@ -146,8 +146,8 @@ No se agregó ninguna librería nueva fuera de la lista de CLAUDE.md §13.
 
 Quedan dos `TODO(fase-1)` marcados:
 
-- `engine/src/lib/pdf-extract.ts`: si surge un PDF escaneado en producción, agregar conversión a imagen o pasar el PDF binario como adjunto `document` al sub-agente.
-- `engine/src/agents/docscan.ts`: el prompt actual procesa la primera factura si encuentra varias (caso Caja Chica). El splitter completo va en Fase 2+.
+- `backend/src/lib/pdf-extract.ts`: si surge un PDF escaneado en producción, agregar conversión a imagen o pasar el PDF binario como adjunto `document` al sub-agente.
+- `backend/src/agents/docscan.ts`: el prompt actual procesa la primera factura si encuentra varias (caso Caja Chica). El splitter completo va en Fase 2+.
 
 ## 9. Notas para el contador
 

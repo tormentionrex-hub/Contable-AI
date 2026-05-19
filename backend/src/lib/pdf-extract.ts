@@ -10,25 +10,11 @@ export interface PdfExtractResult {
   text: string;
   /** Cantidad de páginas detectadas. */
   numPages: number;
-  /** True si el PDF parece escaneado (texto extraído insuficiente o basura OCR). */
+  /** True si el PDF parece escaneado (texto extraído insuficiente). */
   isScanned: boolean;
 }
 
 const MIN_CHARS_FOR_NATIVE = 50;
-const MIN_ASCII_RATIO = 0.7;
-
-function asciiRatio(text: string): number {
-  if (text.length === 0) return 1;
-  let printable = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    // ASCII imprimible + saltos de línea + tildes UTF-8 básicas (rango latín).
-    if ((c >= 0x20 && c <= 0x7e) || c === 0x09 || c === 0x0a || c === 0x0d || (c >= 0xa0 && c <= 0xff)) {
-      printable++;
-    }
-  }
-  return printable / text.length;
-}
 
 export async function extractPdfText(buffer: Buffer): Promise<PdfExtractResult> {
   let text = '';
@@ -41,6 +27,11 @@ export async function extractPdfText(buffer: Buffer): Promise<PdfExtractResult> 
     // PDF corrupto o sin texto extraíble — tratamos como escaneado.
     return { text: '', numPages: 0, isScanned: true };
   }
-  const isScanned = text.length < MIN_CHARS_FOR_NATIVE || asciiRatio(text) < MIN_ASCII_RATIO;
+  // Heurística simple: si pdf-parse pudo sacar >= 50 caracteres, lo consideramos nativo.
+  // El asciiRatio anterior fallaba con textos en español (tildes y caracteres extendidos)
+  // — marcaba como "escaneado" facturas que en realidad eran texto extraíble y activaba
+  // Vision innecesariamente. Si en producción aparece un escaneado real, vendrá con muy
+  // poco texto (< 50 chars) y la heurística simple lo detecta igual.
+  const isScanned = text.length < MIN_CHARS_FOR_NATIVE;
   return { text, numPages, isScanned };
 }

@@ -19,13 +19,13 @@ n8n (UX/orquestador) ── HTTP ──▶ Motor Node.js + Express + Agent SDK �
 ```
 
 - **Capa 1 — n8n** (`onlyautotask-n8n.tuoaro.easypanel.host`): formularios web, chat, schedule, WhatsApp (fase 2).
-- **Capa 2 — Motor** (`engine/`): Node.js + Express + Claude Agent SDK con 3 sub-agentes (uno por skill).
+- **Capa 2 — Motor** (`backend/`): Node.js + Express + Claude Agent SDK con 3 sub-agentes (uno por skill).
 - **Capa 3 — Tools** (`mcp-servers/`): 4 servidores MCP custom + Google Sheets MCP oficial.
 
 ## Estructura del repo
 
 ```
-engine/                  motor Node.js + Express + Agent SDK
+backend/                  motor Node.js + Express + Agent SDK
 ├── src/
 │   ├── agents/          sub-agentes (DocScan, TaxIVA, Asistente)
 │   ├── tools/           tools internas (no MCP)
@@ -66,7 +66,7 @@ docs/                    documentación operativa (cómo lo usa el contador)
 ## Cómo arrancar (cuando esté Fase 1 lista)
 
 ```powershell
-cd engine
+cd backend
 npm install
 cp .env.example .env   # editar con credenciales
 npm run dev

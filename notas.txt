@@ -56,7 +56,7 @@ La diferencia clave entre los dos:
 3. NUESTRO STACK Y POR QUÉ IMPORTA
 --------------------------------------------------------------------------------
 
-El motor de FWD Contable AI (la carpeta engine/) se construyó con decisiones
+El motor de FWD Contable AI (la carpeta backend/) se construyó con decisiones
 muy concretas, todas alineadas con la era moderna:
 
    * TypeScript estricto (lo decidimos en CLAUDE.md sección 13).
@@ -248,7 +248,7 @@ con tests "decorativos".
 6. CONFIGURACIÓN ACTUAL Y POR QUÉ CADA LÍNEA EXISTE
 --------------------------------------------------------------------------------
 
-Toda la config vive en engine/package.json bajo la clave "vitest":
+Toda la config vive en backend/package.json bajo la clave "vitest":
 
     "vitest": {
       "include": ["tests/**/*.test.ts"],
@@ -263,7 +263,7 @@ Toda la config vive en engine/package.json bajo la clave "vitest":
     }
 
 include
-   Le dice a Vitest que solo busque tests dentro de engine/tests/. Si no
+   Le dice a Vitest que solo busque tests dentro de backend/tests/. Si no
    pusiéramos esto, podría llegar a tomar archivos .test.ts de
    node_modules y ejecutarlos por error.
 
@@ -284,7 +284,7 @@ fileParallelism: false
    Vitest por default ejecuta varios archivos de test en paralelo, en
    procesos distintos, para terminar antes. En nuestro caso eso es
    peligroso porque docscan.test.ts y reconciliation.test.ts comparten
-   la misma base de datos SQLite (engine/data/fwd-contable.db). Si se
+   la misma base de datos SQLite (backend/data/fwd-contable.db). Si se
    ejecutan a la vez, escriben encima del otro y se pisan. Esta línea
    los obliga a ir uno tras otro.
 
@@ -350,7 +350,7 @@ aproximado sería:
       por:
          import { describe, it, expect } from '@jest/globals'
 
-   3. Crear engine/jest.config.ts con preset ESM, transformer ts-jest,
+   3. Crear backend/jest.config.ts con preset ESM, transformer ts-jest,
       moduleNameMapper para los imports con .js, y un par de workarounds
       para import.meta.url.
 

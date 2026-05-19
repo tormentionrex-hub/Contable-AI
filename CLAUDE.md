@@ -86,7 +86,7 @@ Le toma **horas por semana**. El sistema debe ser **100 % funcional, no demo** �
 |   POST /auth/login        -> JWT (F3)                           |
 |   GET  /health                                                  |
 |                                                                 |
-|  Sub-agentes (uno por skill, cargados desde engine/skills/):    |
+|  Sub-agentes (uno por skill, cargados desde backend/skills/):    |
 |   - DocScan           (docscan.md)                              |
 |   - TaxIVA            (tax-iva.md)                              |
 |   - AsistenteContable (asistente-contable.md)                   |
@@ -115,7 +115,7 @@ Le toma **horas por semana**. El sistema debe ser **100 % funcional, no demo** �
 |  Storages:                                                      |
 |   - Google Sheets (vista del contador, machote 4 hojas)         |
 |   - SQLite        (memoria del Asistente, multi-tenant)         |
-|   - Filesystem    (PDFs/XMLs archivados en engine/data/storage) |
+|   - Filesystem    (PDFs/XMLs archivados en backend/data/storage) |
 +-----------------------------------------------------------------+
 ```
 
@@ -157,7 +157,7 @@ Tomados del documento "Ejercicios del Taller de Contabilidad — Randall Leiton 
 
 ## 6. Datos reales observados — facturas y dialectos
 
-Tenemos **4 PDFs golden** archivados en `engine/tests/fixtures/`. Son facturas reales del cliente FUNDACION CRC Endurance. Cubren 5 dialectos distintos de proveedores costarricenses.
+Tenemos **4 PDFs golden** archivados en `backend/tests/fixtures/`. Son facturas reales del cliente FUNDACION CRC Endurance. Cubren 5 dialectos distintos de proveedores costarricenses.
 
 ### Dialecto 1: CSU (Corporación Supermercados Unidos) — FE v4.4
 
@@ -219,7 +219,7 @@ Ejemplo (CSU Rompope, clave `50626112500310200722315100046010000285222100000000`
 
 ## 8. Machote Forward CR — formato exacto
 
-Tres hojas en un mismo Google Sheet por empresa cliente. Esquema completo en `engine/schemas/sheet-layout.md`.
+Tres hojas en un mismo Google Sheet por empresa cliente. Esquema completo en `backend/schemas/sheet-layout.md`.
 
 ### Hoja 1: "Reintegro Caja Chica" — vista del contador
 
@@ -389,7 +389,7 @@ El presupuesto en APIs externas es **$0**. Las únicas dependencias online son:
 
 ### Base de datos
 
-**SQLite** vía `better-sqlite3`. Archivo en `engine/data/fwd-contable.db`. Schema en `engine/schemas/db.sql`.
+**SQLite** vía `better-sqlite3`. Archivo en `backend/data/fwd-contable.db`. Schema en `backend/schemas/db.sql`.
 
 Justificación: 1000-10000 facturas/empresa caben de sobra. Cero servidor. WAL mode habilitado.
 
@@ -426,7 +426,7 @@ Fase 5: deploy del motor a Easypanel (al lado de n8n). Frontend se sirve estáti
 
 ## 13. Stack técnico completo (Fase 1)
 
-### Motor (engine/)
+### Motor (backend/)
 
 **Dependencias runtime**:
 
@@ -477,11 +477,11 @@ Fase 5: deploy del motor a Easypanel (al lado de n8n). Frontend se sirve estáti
 ### Fase 0 — COMPLETADA
 
 - ✅ Estructura del repo creada.
-- ✅ 3 skills en markdown (`engine/skills/`).
-- ✅ JSON Schema de factura (`engine/schemas/factura.schema.json`).
-- ✅ DB schema SQLite multi-tenant (`engine/schemas/db.sql`).
-- ✅ Layout exacto del machote (`engine/schemas/sheet-layout.md`).
-- ✅ 4 PDFs golden archivados (`engine/tests/fixtures/`).
+- ✅ 3 skills en markdown (`backend/skills/`).
+- ✅ JSON Schema de factura (`backend/schemas/factura.schema.json`).
+- ✅ DB schema SQLite multi-tenant (`backend/schemas/db.sql`).
+- ✅ Layout exacto del machote (`backend/schemas/sheet-layout.md`).
+- ✅ 4 PDFs golden archivados (`backend/tests/fixtures/`).
 - ✅ Documentación: README.md, `docs/00-arquitectura.md`, `docs/01-contexto-ampliado.md`.
 - ✅ Git init + 2 commits locales (`0dedd89` y `b7916dd`).
 - ✅ `.gitignore` que protege `.env`, credenciales, `.scratch/`, `data/`.
@@ -530,7 +530,7 @@ Ver `docs/FASE-2-REPORTE.md`.
 ## 15. Cómo arrancar (cuando Fase 1 esté lista)
 
 ```powershell
-cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine"
+cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\backend"
 npm install
 Copy-Item .env.example .env
 # Editar .env si hace falta
@@ -565,7 +565,7 @@ FWD Contable AI/
 │   ├── 00-arquitectura.md                     Diagrama de 3 capas + flujos.
 │   ├── 01-contexto-ampliado.md                Info del workbook EEFF, chart of accounts, brackets.
 │   └── PROMPT-FASE-1.md                       Prompt para ejecutar Fase 1.
-├── engine/                                    Backend Node.js + Agent SDK.
+├── backend/                                    Backend Node.js + Agent SDK.
 │   ├── skills/
 │   │   ├── docscan.md                         Reglas de extracción por dialecto.
 │   │   ├── tax-iva.md                         Reglas de clasificación y reconciliación.
@@ -589,8 +589,8 @@ FWD Contable AI/
 
 1. **Nunca `git push`**. Solo commits locales. El usuario sube a GitHub manualmente.
 2. **Nunca escribir en `.env`**. Solo en `.env.example`. El usuario llena los valores reales en `.env`.
-3. **Nunca commitear nada de `engine/data/`, `credentials/`, `.scratch/`, `*.db`, `node_modules/`**. Están en `.gitignore`.
-4. **Skills son sagradas**. Si vas a cambiar un skill (`.md` en `engine/skills/`), documentá por qué en el commit. Esos archivos son el "cerebro" del sistema.
+3. **Nunca commitear nada de `backend/data/`, `credentials/`, `.scratch/`, `*.db`, `node_modules/`**. Están en `.gitignore`.
+4. **Skills son sagradas**. Si vas a cambiar un skill (`.md` en `backend/skills/`), documentá por qué en el commit. Esos archivos son el "cerebro" del sistema.
 5. **Tests antes que features**. Cualquier endpoint debe tener test contra los 4 PDFs golden o equivalente.
 6. **Mensajes para el contador en español de CR**. El contador no entiende inglés ni jerga técnica.
 7. **No inventar números**. Si una query devuelve 0 filas, decirlo. No hacer aproximaciones para "rellenar".

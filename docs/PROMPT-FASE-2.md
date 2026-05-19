@@ -38,7 +38,7 @@ Necesitamos una cuenta de servicio que pueda crear y editar Google Sheets en tu 
              "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\credentials\google-service-account.json"
    ```
 
-7. **Agregar las variables al `.env`** de `engine/`:
+7. **Agregar las variables al `.env`** de `backend/`:
 
 ```
 GOOGLE_SERVICE_ACCOUNT_JSON=./credentials/google-service-account.json
@@ -89,7 +89,7 @@ Con el pre-requisito de Google listo:
 ### Paso 1 — Verificá que `.env` tiene todo
 
 ```powershell
-Get-Content "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine\.env"
+Get-Content "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\backend.env"
 ```
 
 Tenés que ver: `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_SHEET_ID_FUNDACION_CRC` (vacío) y `CONTADOR_EMAIL`.
@@ -148,7 +148,7 @@ Errores típicos de esta fase y cómo destrabarlos:
 | `Error: ENOENT credentials/google-service-account.json` | El JSON no quedó en la carpeta correcta | Verificá con `Test-Path` del Paso 2. |
 | MCP no arranca, error de stdio | Posible incompatibilidad del SDK MCP con Node 24 | Pedile a Claude que use `@modelcontextprotocol/sdk` v1.x (es ESM-only, Node 18+, compatible con Node 24). |
 | Splitter dice "1 factura" en el PDF de Caja Chica | Heurística muy estricta | Pedile a Claude que use Claude Vision en el primer paso para identificar páginas de inicio de factura, no solo regex. |
-| El Sheet aparece pero sin formato (sin color, sin fórmulas) | El módulo no aplicó el `batchUpdate` con `repeatCell` | Pedile a Claude que verifique el código de `createMachote` contra `engine/schemas/sheet-layout.md`. |
+| El Sheet aparece pero sin formato (sin color, sin fórmulas) | El módulo no aplicó el `batchUpdate` con `repeatCell` | Pedile a Claude que verifique el código de `createMachote` contra `backend/schemas/sheet-layout.md`. |
 
 ---
 

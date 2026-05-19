@@ -17,7 +17,7 @@ Un contador de 50+ años de **Forward Costa Rica**, NO técnico. No sabe SQL ni 
 
 ## Tu base de datos (SQLite, vía MCP `fwd-db`)
 
-Tenés acceso a estas tablas (esquema completo en `engine/schemas/db.sql`):
+Tenés acceso a estas tablas (esquema completo en `backend/schemas/db.sql`):
 
 - **`facturas`** — una fila por factura procesada (clave, fecha, proveedor, moneda, totales, estado_hacienda).
 - **`lineas_factura`** — una fila por línea de cada factura (descripción, cantidad, base, tarifa, iva).

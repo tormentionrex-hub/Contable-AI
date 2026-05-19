@@ -10,10 +10,10 @@ CRITERIOS DE ACEPTACIÓN
 
 Al terminar, los siguientes 6 comandos deben funcionar sin errores:
 
-1. cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine" ; npm install
+1. cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\backend" ; npm install
 2. Copy-Item .env.example .env
 3. npm run db:init
-   (crea engine/data/fwd-contable.db con todas las tablas, vistas e inserta FUNDACION CRC Endurance)
+   (crea backend/data/fwd-contable.db con todas las tablas, vistas e inserta FUNDACION CRC Endurance)
 4. npm run dev
    (arranca Express en http://localhost:3000 sin errores)
 5. curl http://localhost:3000/health
@@ -27,50 +27,50 @@ RESTRICCIONES DURAS (de CLAUDE.md)
 - Cero `git push`. Solo `git init` y `git commit` locales. Si necesitás commitear, usá el formato visto en commits previos.
 - Cero librerías fuera de las listadas en CLAUDE.md sección 13. Si CREÉS que necesitás una más, agregala a la lista y comentá por qué.
 - Cero modificación de archivos en `.gitignore` (datos locales, .env, credenciales).
-- Los skills en engine/skills/*.md son sagrados. NO los reescribas. Solo los cargás como contexto del sub-agente.
+- Los skills en backend/skills/*.md son sagrados. NO los reescribas. Solo los cargás como contexto del sub-agente.
 
 PLAN DE EJECUCIÓN PASO A PASO
 
 Te recomiendo seguir este orden. Marcá cada paso con TodoWrite.
 
 PASO 1 — Inicializar package.json y deps
-- cd engine
+- cd backend
 - Actualizá package.json para incluir TODAS las dependencias listadas en CLAUDE.md sección 13.
 - npm install (debe completar sin errores).
 - Si alguna dep falla, ajustá la versión a la latest estable y reintentá.
 
 PASO 2 — Estructura de carpetas
 Crear:
-  engine/src/server.ts
-  engine/src/config.ts
-  engine/src/lib/db.ts
-  engine/src/lib/logger.ts
-  engine/src/lib/pdf-extract.ts
-  engine/src/lib/xml-parse.ts
-  engine/src/lib/validator.ts
-  engine/src/lib/db-init.ts
-  engine/src/agents/claude.ts
-  engine/src/agents/docscan.ts
-  engine/src/agents/tax-iva.ts
-  engine/src/routes/health.ts
-  engine/src/routes/process-document.ts
-  engine/src/types/factura.ts
-  engine/tests/docscan.test.ts
-  engine/tests/reconciliation.test.ts
-  engine/data/.gitkeep
-  engine/data/uploads/.gitkeep
+  backend/src/server.ts
+  backend/src/config.ts
+  backend/src/lib/db.ts
+  backend/src/lib/logger.ts
+  backend/src/lib/pdf-extract.ts
+  backend/src/lib/xml-parse.ts
+  backend/src/lib/validator.ts
+  backend/src/lib/db-init.ts
+  backend/src/agents/claude.ts
+  backend/src/agents/docscan.ts
+  backend/src/agents/tax-iva.ts
+  backend/src/routes/health.ts
+  backend/src/routes/process-document.ts
+  backend/src/types/factura.ts
+  backend/tests/docscan.test.ts
+  backend/tests/reconciliation.test.ts
+  backend/data/.gitkeep
+  backend/data/uploads/.gitkeep
 
 PASO 3 — config.ts y logger.ts
 - config.ts: carga .env con dotenv, valida con zod (PORT, NODE_ENV, DB_PATH, CLAUDE_AUTH_MODE, STORAGE_PATH, LOG_LEVEL). Exporta `config` tipado.
 - logger.ts: winston con format JSON en prod, pretty en dev. Niveles: error, warn, info, debug.
 
 PASO 4 — db.ts y db-init.ts
-- db.ts: abre engine/data/fwd-contable.db con better-sqlite3 con `WAL` y `foreign_keys=ON`. Exporta `db` singleton.
-- db-init.ts: lee engine/schemas/db.sql y lo ejecuta contra db. Script invocable con `npm run db:init`.
+- db.ts: abre backend/data/fwd-contable.db con better-sqlite3 con `WAL` y `foreign_keys=ON`. Exporta `db` singleton.
+- db-init.ts: lee backend/schemas/db.sql y lo ejecuta contra db. Script invocable con `npm run db:init`.
 - Agregá script `"db:init": "tsx src/lib/db-init.ts"` en package.json.
 
 PASO 5 — validator.ts
-- Cargá engine/schemas/factura.schema.json con ajv (con ajv-formats para validar `date`).
+- Cargá backend/schemas/factura.schema.json con ajv (con ajv-formats para validar `date`).
 - Exportá `validateFactura(json)` que devuelve { valid: boolean, errors: ErrorObject[] | null }.
 
 PASO 6 — pdf-extract.ts y xml-parse.ts
@@ -80,13 +80,13 @@ PASO 6 — pdf-extract.ts y xml-parse.ts
 PASO 7 — agents/claude.ts (cliente compartido)
 - Importá `@anthropic-ai/claude-agent-sdk`.
 - Exportá una función `createSubagent({ name, skillPath, model? })` que:
-  - Lee el archivo de skill (e.g. engine/skills/docscan.md) como string.
+  - Lee el archivo de skill (e.g. backend/skills/docscan.md) como string.
   - Inicializa un cliente del Agent SDK autenticado vía Claude Code (sin API key — debe detectar automáticamente la sesión Claude Code; consultá la doc del SDK si dudás).
   - Devuelve una función `run(input: any): Promise<any>` que envía el input al sub-agente con el skill como system prompt y devuelve el JSON parseado.
 - Modelo por default: el más capaz disponible (claude-sonnet-4 o equivalente). Si no estás seguro, dejá undefined y que el SDK use el default.
 
 PASO 8 — agents/docscan.ts
-- Importa createSubagent y crea `docscanAgent` con skill `engine/skills/docscan.md`.
+- Importa createSubagent y crea `docscanAgent` con skill `backend/skills/docscan.md`.
 - Exportá `extractFactura({ buffer, mimeType, filename }): Promise<FacturaSchemaJson>`.
 - Lógica:
   1. Si mimeType es 'application/xml' o 'text/xml': parsea con xml-parse.ts y pasalo al agente como input estructurado.
@@ -99,7 +99,7 @@ PASO 8 — agents/docscan.ts
   5. Devolvé el JSON validado.
 
 PASO 9 — agents/tax-iva.ts
-- Importa createSubagent y crea `taxIvaAgent` con skill `engine/skills/tax-iva.md`.
+- Importa createSubagent y crea `taxIvaAgent` con skill `backend/skills/tax-iva.md`.
 - Exportá `enrichFactura({ factura, empresa_id }): Promise<{ factura: FacturaSchemaJson, resumen: { status, factura_id, tarifas_detectadas, total_crc, motivos_revision: string[], mensaje_para_contador } }>`.
 - Lógica:
   1. Verificá multi-tenancy: si `factura.receptor.cedula !== empresa_id`, devolvé status='revision_humana' con motivo `FACTURA_OTRA_EMPRESA`. NO escribas a DB.
@@ -116,7 +116,7 @@ PASO 11 — routes/process-document.ts
 - POST /process-document.
 - Body: multipart/form-data con campo `file` (PDF o XML) y campo `empresa_id` (string).
 - Validá empresa_id con zod (no vacío, existe en tabla empresas).
-- Guardá el archivo en engine/data/uploads/<uuid>-<filename>.
+- Guardá el archivo en backend/data/uploads/<uuid>-<filename>.
 - Llamá extractFactura → si falla, devolvé 422 con el detalle.
 - Llamá enrichFactura → si falla, devolvé 422 con el detalle.
 - Devolvé 200 con { factura, resumen }.
@@ -124,7 +124,7 @@ PASO 11 — routes/process-document.ts
 PASO 12 — server.ts
 - Importa express, cors, multer, las rutas.
 - Habilitá CORS para http://localhost:5173 (Vite default) y http://localhost:3000.
-- Habilitá multer con destino engine/data/uploads/, límite 10MB por archivo.
+- Habilitá multer con destino backend/data/uploads/, límite 10MB por archivo.
 - Montá /health y /process-document.
 - Middleware de errores que devuelve JSON en español: { error: string, codigo: string, detalle?: any }.
 - Logger middleware: cada request loguea método, path, status, duración.
@@ -132,7 +132,7 @@ PASO 12 — server.ts
 
 PASO 13 — tests/docscan.test.ts
 - Vitest.
-- 4 test cases, uno por PDF golden en engine/tests/fixtures/:
+- 4 test cases, uno por PDF golden en backend/tests/fixtures/:
   1. CSU Rompope (50626112500310200722315100046010000285222100000000.pdf):
      - factura.totales.total_factura === 25970
      - factura.lineas.length === 2
@@ -191,6 +191,6 @@ ESTILO DE CÓDIGO
 - Errores con clases específicas (FacturaInvalidaError, ReconciliacionFallidaError, etc.) en src/lib/errors.ts.
 - Logs estructurados con winston (no console.log).
 - Comentarios en español cuando expliquen una decisión de negocio, en inglés cuando sean técnicos universales.
-- NO subir archivos a engine/data/ al repo (ya está en .gitignore).
+- NO subir archivos a backend/data/ al repo (ya está en .gitignore).
 
 EMPEZÁ AHORA. No me pidas confirmación. Si algo no está en CLAUDE.md y tenés que decidir, asumí razonablemente y dejá un TODO. Al final mostrame el output de `npm test` y el resumen.

@@ -6,7 +6,7 @@
 
 ## 1. El stack del motor (lo que define la decisión)
 
-El motor (`engine/`) corre así:
+El motor (`backend/`) corre así:
 
 | Cosa | Valor | Implicación |
 |---|---|---|
@@ -94,7 +94,7 @@ La curva de aprendizaje, viniendo de Jest, es **prácticamente nula**. Cambia el
 
 ## 6. Nuestra configuración (qué hace cada línea)
 
-Toda la config vive en `engine/package.json`, clave `"vitest"`:
+Toda la config vive en `backend/package.json`, clave `"vitest"`:
 
 ```json
 {
@@ -114,10 +114,10 @@ Toda la config vive en `engine/package.json`, clave `"vitest"`:
 
 | Opción | Por qué |
 |---|---|
-| `include` | Solo corremos tests dentro de `engine/tests/`. Evita que tome archivos `.test.ts` accidentales en `node_modules`. |
+| `include` | Solo corremos tests dentro de `backend/tests/`. Evita que tome archivos `.test.ts` accidentales en `node_modules`. |
 | `testTimeout: 120_000` | Cada test que llama a Claude tarda 18–29 s. El default de 5 s no alcanza. |
 | `hookTimeout: 60_000` | `beforeAll` corre `initDb()` — margen para arranque frío de SQLite. |
-| `fileParallelism: false` | Los tests comparten `engine/data/fwd-contable.db`. Sin esto se pisan los `INSERT OR REPLACE`. |
+| `fileParallelism: false` | Los tests comparten `backend/data/fwd-contable.db`. Sin esto se pisan los `INSERT OR REPLACE`. |
 | `sequence.concurrent: false` | Refuerzo del anterior: serializa además los `it()` dentro de un mismo archivo. |
 | `env.NODE_ENV: "test"` | El logger se vuelve silencioso (ver `src/lib/logger.ts`). |
 | `env.LOG_LEVEL: "warn"` | Override fino: si querés debug, usá `LOG_LEVEL=debug npm test`. |
@@ -127,7 +127,7 @@ Toda la config vive en `engine/package.json`, clave `"vitest"`:
 ## 7. Comandos del día a día
 
 ```powershell
-cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine"
+cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\backend"
 
 # Correr toda la suite (lo que usa CI/aceptación)
 npm test

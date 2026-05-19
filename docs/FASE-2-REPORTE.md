@@ -109,7 +109,7 @@ The user's Drive storage quota has been exceeded.
    contable-ia@contable-ai-496703.iam.gserviceaccount.com
    ```
 3. Copiá el **ID del Sheet** (parte de la URL entre `/d/` y `/edit`).
-4. Pegalo en `engine/.env`:
+4. Pegalo en `backend/.env`:
    ```
    GOOGLE_SHEET_ID_FUNDACION_CRC=<el ID>
    ```
@@ -251,7 +251,7 @@ Costo en tokens Claude por factura procesada (informativo, va contra la suscripc
 ## 11. Cómo arrancar después de clonar
 
 ```powershell
-cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\engine"
+cd "C:\Users\torme\OneDrive\Desktop\FWD Contable AI\backend"
 npm install
 Copy-Item .env.example .env
 # (Editá .env con tu CONTADOR_EMAIL y GOOGLE_SERVICE_ACCOUNT_JSON)
