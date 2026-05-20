@@ -96,6 +96,27 @@ CREATE TABLE IF NOT EXISTS facturas (
   motivo_revision          TEXT,
   pdf_path                 TEXT,                              -- ruta al PDF original archivado
   xml_path                 TEXT,                              -- ruta al XML original si lo hay
+  -- Estado de pago al proveedor (independiente del estado fiscal Hacienda).
+  --   'pendiente' = la factura está cargada pero todavía no se le pagó al proveedor.
+  --   'pagada'    = ya se le pagó. fecha_pago indica cuándo.
+  estado_pago              TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado_pago IN ('pendiente','pagada')),
+  fecha_pago               TEXT,                              -- ISO YYYY-MM-DD, NULL si pendiente
+  notas_pago               TEXT,                              -- notas libres (transferencia, # comprobante, etc.)
+  -- Revisión humana completada: cuando el contador miró la factura marcada
+  -- como requiere_revision_humana y verificó que está OK (o la corrigió).
+  --   revisada_por_humano = 1 → la revisión ya se hizo, queda como histórico.
+  --   revisada_por_humano = 0 → todavía pendiente de revisar (default).
+  revisada_por_humano      INTEGER NOT NULL DEFAULT 0,
+  fecha_revision           TEXT,                              -- ISO YYYY-MM-DD
+  notas_revision           TEXT,                              -- comentario del contador al revisar
+  revisada_por_user_id     INTEGER,                           -- users.id que confirmó la revisión
+  -- Archivado (soft delete): cuando el contador "limpia" la pantalla, las facturas
+  -- no se borran físicamente sino que pasan a archivada = 1. Siguen visibles
+  -- en /historial y se pueden restaurar. Esto cumple con buenas prácticas
+  -- contables y fiscales (nada se pierde).
+  archivada                INTEGER NOT NULL DEFAULT 0,
+  fecha_archivado          TEXT,                              -- ISO datetime cuando se archivó
+  archivada_por_user_id    INTEGER,
   FOREIGN KEY (empresa_id) REFERENCES empresas(id),
   FOREIGN KEY (proveedor_cedula) REFERENCES proveedores(cedula)
 );
@@ -105,6 +126,8 @@ CREATE INDEX IF NOT EXISTS idx_facturas_fecha     ON facturas(empresa_id, fecha_
 CREATE INDEX IF NOT EXISTS idx_facturas_proveedor ON facturas(empresa_id, proveedor_cedula);
 CREATE INDEX IF NOT EXISTS idx_facturas_estado    ON facturas(empresa_id, estado_hacienda);
 CREATE INDEX IF NOT EXISTS idx_facturas_revision  ON facturas(empresa_id, requiere_revision_humana) WHERE requiere_revision_humana = 1;
+-- idx_facturas_pago se crea en db-init.ts DESPUÉS de la migración ALTER TABLE,
+-- porque en bases viejas la columna estado_pago no existe todavía cuando se ejecuta este archivo.
 
 CREATE TABLE IF NOT EXISTS lineas_factura (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,18 +240,44 @@ CREATE TABLE IF NOT EXISTS cedulas_cache (
 -- Adelantos de caja chica (P01 del taller).
 -- Saldo = sum(adelantos abiertos) - sum(facturas asociadas al periodo).
 CREATE TABLE IF NOT EXISTS adelantos_caja_chica (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  empresa_id      TEXT NOT NULL,
-  monto_crc       REAL NOT NULL,
-  fecha_entrega   TEXT NOT NULL,
-  responsable     TEXT,
-  estado          TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto','cerrado')),
-  notas           TEXT,
-  creado          TEXT NOT NULL DEFAULT (datetime('now')),
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  empresa_id            TEXT NOT NULL,
+  monto_crc             REAL NOT NULL,
+  fecha_entrega         TEXT NOT NULL,
+  responsable           TEXT,
+  estado                TEXT NOT NULL DEFAULT 'abierto' CHECK (estado IN ('abierto','cerrado')),
+  notas                 TEXT,
+  creado                TEXT NOT NULL DEFAULT (datetime('now')),
+  archivada             INTEGER NOT NULL DEFAULT 0,
+  fecha_archivado       TEXT,
+  archivada_por_user_id INTEGER,
   FOREIGN KEY (empresa_id) REFERENCES empresas(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_adelantos_empresa ON adelantos_caja_chica(empresa_id, estado);
+
+-- ============================================================
+-- FASE 3 — Usuarios y autenticación
+-- ============================================================
+-- Roles:
+--   'admin'    -> Forward Costa Rica (firma contable). Ve y administra TODAS las empresas.
+--   'contador' -> Usuario asignado a UNA empresa. Solo ve los datos de su empresa.
+-- El JWT firmado lleva { sub: id, email, rol, empresa_id } y expira segun JWT_EXPIRES_IN.
+CREATE TABLE IF NOT EXISTS users (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  email           TEXT NOT NULL UNIQUE,
+  password_hash   TEXT NOT NULL,
+  nombre          TEXT NOT NULL,
+  rol             TEXT NOT NULL CHECK (rol IN ('admin','contador')),
+  empresa_id      TEXT,                                  -- NULL para admin; FK para contador
+  activo          INTEGER NOT NULL DEFAULT 1,            -- 0 = deshabilitado
+  ultimo_login    TEXT,
+  creado          TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (empresa_id) REFERENCES empresas(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_empresa ON users(empresa_id) WHERE empresa_id IS NOT NULL;
 
 CREATE VIEW IF NOT EXISTS v_resumen_por_tarifa AS
 SELECT

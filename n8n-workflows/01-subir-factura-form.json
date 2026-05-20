@@ -1,0 +1,91 @@
+{
+  "name": "FWD-01-Subir-Factura-Form",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Subir factura — FWD Contable AI",
+        "formDescription": "Subí una factura PDF (nativa o escaneada) o XML de Hacienda. El sistema la procesa con DocScan + Tax-IVA y la escribe en el Sheet de la empresa.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Archivo (PDF o XML)",
+              "fieldType": "file",
+              "requiredField": true,
+              "acceptFileTypes": ".pdf,.xml,application/pdf,application/xml"
+            },
+            {
+              "fieldLabel": "Empresa (cédula jurídica sin guiones)",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "3006696489"
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Procesar factura",
+          "respondWith": "showText",
+          "formSubmittedText": "Factura recibida. Procesando con IA — esto tarda 25-40 segundos. Revisá el Google Sheet de la empresa en 1 minuto."
+        }
+      },
+      "id": "form-trigger",
+      "name": "Form trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "subir-factura-form"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FWD_BACKEND_URL}}/auth/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"email\": \"{{$env.FWD_SERVICE_USER}}\",\n  \"password\": \"{{$env.FWD_SERVICE_PASS}}\"\n}",
+        "options": {}
+      },
+      "id": "auth-login",
+      "name": "Login motor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FWD_BACKEND_URL}}/process-document",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$json.token}}" }
+          ]
+        },
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "file", "inputDataFieldName": "Archivo (PDF o XML)", "parameterType": "formBinaryData" },
+            { "name": "empresa_id", "value": "={{$node['Form trigger'].json['Empresa (cédula jurídica sin guiones)']}}" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "id": "post-process",
+      "name": "POST /process-document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Form trigger": { "main": [[{ "node": "Login motor", "type": "main", "index": 0 }]] },
+    "Login motor": { "main": [[{ "node": "POST /process-document", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "fwd-contable-ai",
+    "description": "Variables de entorno necesarias en n8n: FWD_BACKEND_URL (https://...), FWD_SERVICE_USER, FWD_SERVICE_PASS"
+  }
+}

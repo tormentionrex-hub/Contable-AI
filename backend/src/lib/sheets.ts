@@ -591,6 +591,8 @@ const MOTIVO_TRADUCCION: Record<string, string> = {
   TIPO_CAMBIO_NO_DISPONIBLE: 'No se pudo obtener el tipo de cambio para la fecha de la factura. Cargalo a mano.',
   DUPLICADA: 'Esta factura ya estaba cargada en el sistema. Confirmá si es un duplicado o una corrección.',
   FACTURA_OTRA_EMPRESA: 'La factura tiene como receptor a una empresa distinta a la activa. Cargala en el libro correcto.',
+  EXTRACCION_FALLIDA: 'No se pudo extraer la factura completa. Revisá el PDF/XML y completá los datos a mano.',
+  ENRIQUECIMIENTO_FALLIDO: 'La factura se extrajo pero falló el cálculo de IVA. Revisá los montos y tarifas.',
 };
 
 export async function markRevision(args: {

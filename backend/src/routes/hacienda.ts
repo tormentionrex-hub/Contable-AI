@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { obtenerTipoCambio, validarCedula, HaciendaError } from '../lib/hacienda.js';
 import { AppError } from '../lib/errors.js';
+import { requireAuth } from '../lib/auth.js';
 
 export const haciendaRouter = Router();
 
@@ -10,7 +11,7 @@ const TcQuery = z.object({
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
-haciendaRouter.get('/hacienda/tc', async (req, res, next) => {
+haciendaRouter.get('/hacienda/tc', requireAuth, async (req, res, next) => {
   try {
     const parsed = TcQuery.safeParse(req.query);
     if (!parsed.success) {
@@ -28,7 +29,7 @@ haciendaRouter.get('/hacienda/tc', async (req, res, next) => {
   }
 });
 
-haciendaRouter.get('/hacienda/cedula/:cedula', async (req, res, next) => {
+haciendaRouter.get('/hacienda/cedula/:cedula', requireAuth, async (req, res, next) => {
   try {
     const cedula = String(req.params.cedula).replace(/\D/g, '');
     if (cedula.length < 9) {

@@ -132,7 +132,50 @@ export async function extractFactura(input: ExtractInput): Promise<FacturaSchema
     });
   }
 
+  // Red de seguridad post-extracción: si la fecha es obviamente inválida
+  // (futura o muy vieja), forzamos revisión humana. Sirve como salvavidas si
+  // el agente se equivocó leyendo dígitos parecidos (3/8, 1/7) o si un OCR
+  // degradado dio un día corrido.
+  validarFechaSospechosa(factura, log);
+
   return factura;
+}
+
+function validarFechaSospechosa(factura: FacturaSchemaJson, log: typeof logger): void {
+  const iso = factura.factura?.fecha_emision;
+  if (!iso || typeof iso !== 'string') return;
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return;
+
+  const [, y, m, d] = match;
+  const fechaFactura = new Date(`${iso}T12:00:00`);
+  const hoy = new Date();
+  const diffDias = (fechaFactura.getTime() - hoy.getTime()) / 86_400_000;
+
+  let motivo: 'FECHA_FUTURA' | 'FECHA_MUY_VIEJA' | 'FECHA_INVALIDA' | null = null;
+  if (diffDias > 1) {
+    motivo = 'FECHA_FUTURA';
+  } else if (diffDias < -365 * 5) {
+    motivo = 'FECHA_MUY_VIEJA';
+  } else if (Number(m) < 1 || Number(m) > 12 || Number(d) < 1 || Number(d) > 31) {
+    motivo = 'FECHA_INVALIDA';
+  }
+
+  if (motivo) {
+    log.warn('Fecha sospechosa detectada, forzando revisión humana', {
+      fecha_emision: iso,
+      motivo,
+      diff_dias: Math.round(diffDias),
+    });
+    factura.requiere_revision_humana = true;
+    if (!factura.motivo_revision) {
+      factura.motivo_revision = motivo;
+    }
+    if (factura.confianza_extraccion > 0.7) {
+      factura.confianza_extraccion = 0.7;
+    }
+  }
+  void y;
 }
 
 function buildPdfPrompt(args: {
@@ -146,6 +189,25 @@ function buildPdfPrompt(args: {
     `Archivo: ${args.filename}`,
     `Páginas: ${args.numPages}`,
     `Fuente probable: ${args.isScanned ? 'pdf_escaneado' : 'pdf_nativo'}`,
+    ``,
+    `## RECORDATORIO CRÍTICO`,
+    ``,
+    `Esta extracción alimenta una declaración fiscal real. PROHIBIDO inventar datos`,
+    `identificatorios y monetarios (fechas, montos, cédulas, nombres, clave numérica).`,
+    ``,
+    `- Esos campos DEBEN estar escritos literalmente en la factura. Si no aparecen → \`null\`.`,
+    `- Las fechas se copian LITERALMENTE como están en el documento. No las recalcules.`,
+    `  Formato CR: dd/mm/yyyy. Convertir a YYYY-MM-DD sin alterar día/mes/año.`,
+    `- Antes de devolver el JSON, releé la factura UNA SEGUNDA VEZ y confirmá:`,
+    `  fecha, total, cédula, proveedor, número de líneas y consecutivo coinciden.`,
+    `- Si algo no se lee con claridad, marcá \`requiere_revision_humana: true\``,
+    `  con el motivo apropiado en vez de adivinar.`,
+    ``,
+    `IMPORTANTE — \`tarifa_iva_marcada\` no es un campo identificatorio: es TRANSCRIPCIÓN`,
+    `de la tarifa visible en la factura. Si ves cualquier marca de tarifa (columna %,`,
+    `texto "IVA 13%", letra G/P/M/S/E al final de la línea, columna IMP con número),`,
+    `copiala. Solo dejá \`tarifa_iva_marcada: null\` cuando la columna está vacía (caso`,
+    `CSU) y Tax-IVA infiere después. NO devuelvas null si la tarifa está visible.`,
     ``,
     `Aplicá las reglas por dialecto de tu skill. Detectá el proveedor por el logo/encabezado del texto y elegí el dialecto correcto.`,
     ``,
@@ -173,6 +235,17 @@ function buildXmlPrompt(args: {
     `Archivo: ${args.filename}`,
     `Tipo detectado: ${args.tipoDocumento ?? 'desconocido'}`,
     `Versión detectada: ${args.version ?? 'desconocida'}`,
+    ``,
+    `## RECORDATORIO CRÍTICO`,
+    ``,
+    `El XML es la fuente más confiable. No inventes ni recalcules nada.`,
+    `- \`FechaEmision\` viene como ISO 8601 con offset, p.ej. \`2026-05-23T10:00:00-06:00\`.`,
+    `  Tomá los primeros 10 caracteres (\`2026-05-23\`) como \`fecha_emision\`. NO conviertas`,
+    `  a UTC ni a otra zona. La parte calendario es la oficial.`,
+    `- Si el XML trae \`tipoCambio: 1\` y la moneda es CRC, copialo. Si la moneda es USD/EUR,`,
+    `  setealo en \`null\` y dejá que Tax-IVA consulte Hacienda.`,
+    `- Si un campo del schema no existe en el XML → \`null\`. No completes con valores`,
+    `  inferidos del nombre del archivo ni de tu memoria.`,
     ``,
     `Devolvé EXCLUSIVAMENTE el JSON que matchea factura.schema.json. fuente="xml_hacienda".`,
     ``,

@@ -4,6 +4,7 @@ import { buildHaciendaMcp } from './mcp/hacienda-cr.js';
 import { buildFwdDbMcp } from './mcp/fwd-db.js';
 import { validateFactura, getSchema } from '../lib/validator.js';
 import { getDb } from '../lib/db.js';
+import { registrarProcesamiento } from '../lib/fwd-db.js';
 import {
   AgenteFalloError,
   EmpresaDesconocidaError,
@@ -98,57 +99,161 @@ export async function enrichFactura(input: EnrichInput): Promise<EnrichOutput> {
     throw new FacturaOtraEmpresaError(receptorCedula, empresa.nombre);
   }
 
-  // Llamada al agente Tax-IVA.
+  // ============================================================
+  // Reintento defensivo: si el modelo devuelve JSON inválido la 1ra vez
+  // (flakiness conocida del LLM), reintentamos 1 vez. Si la 2da también
+  // falla, persistimos la factura tal cual la dejó DocScan con motivo
+  // ENRIQUECIMIENTO_FALLIDO — no perdemos el documento del contador.
+  // ============================================================
+  const inicioTotal = Date.now();
   const prompt = buildPrompt({ factura: input.factura, empresa });
-  const { output, durationMs } = await agent.run<EnrichOutput>({
-    prompt,
-    outputSchema: TAX_IVA_OUTPUT_SCHEMA,
-    maxTurns: 3,
-  });
-  log.info('Tax-IVA terminó', { empresa: empresa.id, durationMs });
 
-  if (!output || typeof output !== 'object' || !('factura' in output) || !('resumen' in output)) {
-    throw new AgenteFalloError('tax-iva', 'Output del agente no tiene { factura, resumen }');
+  let lastError: unknown = null;
+  let resumenAgente: Partial<ResumenTaxIva> | null = null;
+  let enriched: FacturaSchemaJson | null = null;
+
+  for (let intento = 1; intento <= 2; intento++) {
+    try {
+      const { output, durationMs } = await agent.run<EnrichOutput>({
+        prompt,
+        outputSchema: TAX_IVA_OUTPUT_SCHEMA,
+        maxTurns: intento === 1 ? 3 : 5, // segundo intento con más turnos
+      });
+      log.info('Tax-IVA terminó intento', { empresa: empresa.id, intento, durationMs });
+
+      if (!output || typeof output !== 'object' || !('factura' in output) || !('resumen' in output)) {
+        throw new AgenteFalloError('tax-iva', 'Output del agente no tiene { factura, resumen }');
+      }
+
+      const candidate = coerceFacturaEnvelope(output.factura, input.factura);
+      const validation = validateFactura(candidate);
+      if (!validation.valid) {
+        log.warn('Tax-IVA intento devolvió factura inválida', {
+          intento,
+          errorsText: validation.errorsText,
+          payload: JSON.stringify(candidate).slice(0, 800),
+        });
+        lastError = new FacturaInvalidaError(
+          'Tax-IVA devolvió una factura que no cumple el schema',
+          { errors: validation.errors, errorsText: validation.errorsText },
+        );
+        // Sigue al próximo intento.
+        if (intento < 2) {
+          await new Promise((r) => setTimeout(r, 1500)); // backoff de 1.5s antes del retry
+          continue;
+        }
+        break;
+      }
+
+      // OK válido.
+      enriched = candidate;
+      resumenAgente = output.resumen as Partial<ResumenTaxIva>;
+      lastError = null;
+
+      // Reconciliación local de sanity-check (no tira).
+      const reconcile = reconcileFactura(enriched);
+      if (!reconcile.ok) {
+        log.warn('Reconciliación local falló', { detalle: reconcile });
+      }
+      break;
+    } catch (err) {
+      lastError = err;
+      log.warn('Tax-IVA tiró excepción en intento', {
+        intento,
+        err: (err as Error).message,
+      });
+      if (intento < 2) {
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+    }
   }
 
-  // Algunos modelos devuelven la "factura" como el contenido interno (sin envelope).
-  // Si falta `fuente` o `factura.factura`, re-empaquetamos heredando del input.
-  const enriched = coerceFacturaEnvelope(output.factura, input.factura);
+  const durationTotal = Date.now() - inicioTotal;
+  const facturaId =
+    resumenAgente?.factura_id ||
+    input.factura.factura.clave_numerica ||
+    randomUUID();
 
-  const validation = validateFactura(enriched);
-  if (!validation.valid) {
-    log.warn('Tax-IVA devolvió factura inválida', {
-      errorsText: validation.errorsText,
-      payload: JSON.stringify(enriched).slice(0, 2000),
+  // ============================================================
+  // FALLBACK: si tras los reintentos no logramos una factura válida,
+  // persistimos la versión de DocScan con motivo ENRIQUECIMIENTO_FALLIDO.
+  // El contador la verá en "Para Revisión" y podrá completarla a mano.
+  // ============================================================
+  if (!enriched) {
+    log.error('Tax-IVA falló tras todos los reintentos — persistiendo fallback', {
+      empresa: empresa.id,
+      err: lastError instanceof Error ? lastError.message : String(lastError),
+      durationTotal,
     });
-    throw new FacturaInvalidaError(
-      'Tax-IVA devolvió una factura que no cumple el schema',
-      { errors: validation.errors, errorsText: validation.errorsText },
-    );
+
+    const fallback: FacturaSchemaJson = {
+      ...input.factura,
+      requiere_revision_humana: true,
+      motivo_revision: 'ENRIQUECIMIENTO_FALLIDO',
+    };
+
+    persistFactura({
+      empresaId: input.empresa_id,
+      facturaId,
+      factura: fallback,
+      storagePath: input.storagePath,
+    });
+
+    registrarProcesamiento({
+      facturaId,
+      agente: 'tax-iva',
+      evento: 'enriquecimiento_fallido_persistido',
+      detalle: {
+        error: lastError instanceof Error ? lastError.message : String(lastError),
+        intentos: 2,
+      },
+      duracionMs: durationTotal,
+    });
+
+    const resumen: ResumenTaxIva = {
+      status: 'revision_humana',
+      factura_id: facturaId,
+      tarifas_detectadas: collectTarifas(fallback),
+      total_crc: fallback.factura.totales.total_factura,
+      motivos_revision: ['ENRIQUECIMIENTO_FALLIDO'],
+      mensaje_para_contador:
+        'La factura se extrajo pero no pudimos calcular el IVA automáticamente. Revisala y completá las tarifas a mano desde "Para Revisión".',
+    };
+
+    return { factura: fallback, resumen };
   }
 
-  // Reconciliación local de sanity-check (no falla — el agente ya marcó si hubo problema).
-  const reconcile = reconcileFactura(enriched);
-  if (!reconcile.ok) {
-    log.warn('Reconciliación local falló', { detalle: reconcile });
-  }
-
-  // Asegurar resumen consistente.
+  // ============================================================
+  // Éxito: persistir + auditar.
+  // ============================================================
   const resumen: ResumenTaxIva = {
-    status: output.resumen.status ?? (enriched.requiere_revision_humana ? 'revision_humana' : 'ok'),
-    factura_id: output.resumen.factura_id || enriched.factura.clave_numerica || randomUUID(),
-    tarifas_detectadas: dedupeTarifas(output.resumen.tarifas_detectadas ?? collectTarifas(enriched)),
-    total_crc: output.resumen.total_crc ?? enriched.factura.totales.total_factura,
-    motivos_revision: output.resumen.motivos_revision ?? (enriched.motivo_revision ? [enriched.motivo_revision] : []),
-    mensaje_para_contador: output.resumen.mensaje_para_contador ?? 'Factura procesada.',
+    status: resumenAgente?.status ?? (enriched.requiere_revision_humana ? 'revision_humana' : 'ok'),
+    factura_id: facturaId,
+    tarifas_detectadas: dedupeTarifas(resumenAgente?.tarifas_detectadas ?? collectTarifas(enriched)),
+    total_crc: resumenAgente?.total_crc ?? enriched.factura.totales.total_factura,
+    motivos_revision:
+      resumenAgente?.motivos_revision ?? (enriched.motivo_revision ? [enriched.motivo_revision] : []),
+    mensaje_para_contador: resumenAgente?.mensaje_para_contador ?? 'Factura procesada.',
   };
 
-  // Persistir en SQLite (idempotente si hay clave_numerica).
   persistFactura({
     empresaId: input.empresa_id,
-    facturaId: resumen.factura_id,
+    facturaId,
     factura: enriched,
     storagePath: input.storagePath,
+  });
+
+  registrarProcesamiento({
+    facturaId,
+    agente: 'tax-iva',
+    evento: enriched.requiere_revision_humana ? 'enriquecimiento_revision' : 'enriquecimiento_ok',
+    detalle: {
+      tarifas: resumen.tarifas_detectadas,
+      total_crc: resumen.total_crc,
+      motivos: resumen.motivos_revision,
+    },
+    duracionMs: durationTotal,
   });
 
   return { factura: enriched, resumen };

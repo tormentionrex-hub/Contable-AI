@@ -28,7 +28,13 @@
         "RECONCILIACION_FALLIDA",
         "MONEDA_DESCONOCIDA",
         "TIPO_CAMBIO_NO_DISPONIBLE",
-        "DUPLICADA"
+        "DUPLICADA",
+        "EXTRACCION_FALLIDA",
+        "ENRIQUECIMIENTO_FALLIDO",
+        "FECHA_ILEGIBLE",
+        "FECHA_FUTURA",
+        "FECHA_MUY_VIEJA",
+        "FECHA_INVALIDA"
       ]
     },
     "factura": {

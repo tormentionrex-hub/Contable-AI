@@ -1,0 +1,95 @@
+{
+  "name": "FWD-02-Chat-Asistente",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Asistente Contable — FWD Contable AI",
+        "formDescription": "Preguntale al asistente sobre tus facturas. Ej: \"¿Cuánto se gastó este mes?\"",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Tu pregunta",
+              "fieldType": "textarea",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Empresa (cédula jurídica)",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "3006696489"
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Preguntar",
+          "respondWith": "lastNode"
+        }
+      },
+      "id": "form-trigger",
+      "name": "Form chat",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "chat-asistente"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FWD_BACKEND_URL}}/auth/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"email\": \"{{$env.FWD_SERVICE_USER}}\",\n  \"password\": \"{{$env.FWD_SERVICE_PASS}}\"\n}",
+        "options": {}
+      },
+      "id": "auth-login",
+      "name": "Login motor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.FWD_BACKEND_URL}}/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$json.token}}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"mensaje\": \"{{$node['Form chat'].json['Tu pregunta'].replace(/\\\"/g, '\\\\\\\"')}}\",\n  \"empresa_id\": \"{{$node['Form chat'].json['Empresa (cédula jurídica)']}}\",\n  \"incluir_historial\": false\n}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "post-chat",
+      "name": "POST /chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{$json.respuesta}}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Responder al usuario",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Form chat": { "main": [[{ "node": "Login motor", "type": "main", "index": 0 }]] },
+    "Login motor": { "main": [[{ "node": "POST /chat", "type": "main", "index": 0 }]] },
+    "POST /chat": { "main": [[{ "node": "Responder al usuario", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "meta": {
+    "instanceId": "fwd-contable-ai",
+    "description": "Variables de entorno necesarias en n8n: FWD_BACKEND_URL, FWD_SERVICE_USER, FWD_SERVICE_PASS"
+  }
+}

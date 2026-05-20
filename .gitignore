@@ -1,57 +1,78 @@
-# Dependencias
+# ============================================================
+# FWD Contable AI — .gitignore
+# Objetivo: que el repo público solo contenga código + docs
+# limpios. Todo lo que contenga secretos, datos del cliente o
+# notas de setup personales queda fuera.
+# ============================================================
+
+# --- Dependencias ---
 node_modules/
 .pnp.*
 
-# Build
+# --- Build outputs ---
 dist/
 build/
 *.tsbuildinfo
+frontend/dist/
+frontend/*.tsbuildinfo
 
-# Variables de entorno (sensibles)
+# --- Variables de entorno ---
+# Política: NINGÚN archivo .env de ningún tipo se publica
+# (ni .env, ni .env.example, ni .env.docker.example).
+# Quien clone el repo arma su .env mirando docs/DEPLOY.md.
 .env
-.env.local
-.env.*.local
-backend/.env
+.env.*
+**/.env
+**/.env.*
 
-# Documentación de setup local que contiene el .env literal y emails personales.
-# Funcionalmente equivalente al .env — NUNCA subir.
+# --- Documentación de setup local con .env literal / emails personales ---
+# Funcionalmente equivalentes al .env — NUNCA subir.
 SETUP-OTRA-PC.md
 SETUP-OTRA-PC-PROMPT.txt
+START-FASE-*.txt
+docs/PROMPT-FASE-2.md
 
-# Credenciales (NUNCA subir)
+# --- Credenciales (NUNCA subir) ---
 credentials/
 *.json.key
 google-service-account*.json
 hacienda-token*.json
+*.pem
+*.p12
+*.pfx
 
-# Scratch (exploración temporal, no es código de producción)
+# --- Scratch (exploración temporal, no es código de producción) ---
 .scratch/
 
-# Storage local
+# --- Storage local ---
 backend/data/
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
 
-# Logs
+# --- Uploads (PDFs reales subidos por el contador) ---
+backend/data/uploads/
+backend/data/storage/
+
+# --- Logs ---
 *.log
 logs/
 
-# Sistema operativo
+# --- Sistema operativo ---
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Editor
+# --- Editor ---
 .vscode/*
 !.vscode/extensions.json
 .idea/
 
-# Claude Code
+# --- Claude Code ---
 .claude/
 
-# Misc
+# --- Misc ---
 *.swp
 *.swo
 *~

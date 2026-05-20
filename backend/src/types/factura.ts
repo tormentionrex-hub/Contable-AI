@@ -16,7 +16,13 @@ export type MotivoRevision =
   | 'MONEDA_DESCONOCIDA'
   | 'TIPO_CAMBIO_NO_DISPONIBLE'
   | 'DUPLICADA'
-  | 'FACTURA_OTRA_EMPRESA';
+  | 'FACTURA_OTRA_EMPRESA'
+  | 'EXTRACCION_FALLIDA'
+  | 'ENRIQUECIMIENTO_FALLIDO'
+  | 'FECHA_ILEGIBLE'
+  | 'FECHA_FUTURA'
+  | 'FECHA_MUY_VIEJA'
+  | 'FECHA_INVALIDA';
 
 export type TarifaIVA = 0 | 1 | 2 | 4 | 13;
 export type Moneda = 'CRC' | 'USD' | 'EUR';

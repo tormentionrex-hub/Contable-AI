@@ -1,0 +1,51 @@
+# ============================================================
+# .dockerignore — qué NO entra en el contexto de build
+# ============================================================
+# Mantener la imagen chica + evitar fugas de secrets / data del cliente.
+
+# Deps locales (se reinstalan con npm ci dentro del builder)
+node_modules
+npm-debug.log
+
+# Build artifacts locales
+dist
+*.tsbuildinfo
+
+# Datos locales — incluye SQLite del cliente con facturas reales
+data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Credenciales — el Service Account JSON va por Easypanel secret-file, NUNCA dentro de la imagen
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+# Tests + fixtures grandes (1.8 MB de PDFs reales del cliente — no van a producción)
+tests
+*.test.ts
+*.spec.ts
+vitest.config.ts
+
+# Documentación interna (no es runtime)
+*.md
+!README.md
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Misc
+.scratch
+coverage

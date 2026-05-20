@@ -42,6 +42,19 @@ const Schema = z.object({
   GOOGLE_SHEET_ID_FUNDACION_CRC: z.string().optional(),
   CONTADOR_EMAIL: z.string().email().optional().or(z.literal('')),
 
+  // Auth (Fase 3) — opt-in: si JWT_SECRET no está seteado, el motor corre en modo
+  // DEV sin autenticación obligatoria (loguea WARN al boot). Apenas se setea, las
+  // rutas privadas exigen Bearer token.
+  // IMPORTANTE: en NODE_ENV=production el refinement de abajo lo hace OBLIGATORIO,
+  // para evitar que un deploy accidental quede expuesto sin auth.
+  JWT_SECRET: z.string().min(16).optional(),
+  // Acepta solo el formato corto de jsonwebtoken: '60', '8h', '7d', '1m'. Default 8h.
+  JWT_EXPIRES_IN: z.string().regex(/^\d+(\.\d+)?[smhdy]?$/, {
+    message: 'JWT_EXPIRES_IN debe ser tipo "60", "8h", "7d", "30m". Default "8h".',
+  }).default('8h'),
+  ADMIN_EMAIL: z.string().email().optional(),
+  ADMIN_PASSWORD: z.string().min(8).optional(),
+
   // Deprecated (heredadas de Fase 1, NO usar)
   BCCR_NOMBRE: z.string().optional(),
   BCCR_EMAIL: z.string().optional(),
@@ -51,6 +64,30 @@ const Schema = z.object({
   HACIENDA_FE_USER: z.string().optional(),
   HACIENDA_FE_PASS: z.string().optional(),
   GOOGLE_SHEET_ID: z.string().optional(),
+}).superRefine((data, ctx) => {
+  // En producción, JWT_SECRET es OBLIGATORIO. Sin él, el frontend cae a
+  // DEV_USER (admin sin password) y cualquiera tiene acceso total. Esto
+  // bloquea ese escenario en el arranque.
+  if (data.NODE_ENV === 'production' && (!data.JWT_SECRET || data.JWT_SECRET.length < 16)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['JWT_SECRET'],
+      message:
+        'JWT_SECRET es OBLIGATORIO en NODE_ENV=production (mínimo 16 caracteres). ' +
+        'Sin él, el frontend entra como admin automáticamente. Generá uno con: openssl rand -base64 32',
+    });
+  }
+  // En producción también exigimos ADMIN_PASSWORD para que el admin inicial
+  // no quede con una password aleatoria que el operador no anota.
+  if (data.NODE_ENV === 'production' && data.JWT_SECRET && !data.ADMIN_PASSWORD) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ADMIN_PASSWORD'],
+      message:
+        'ADMIN_PASSWORD es obligatorio en producción cuando JWT_SECRET está seteado. ' +
+        'Sin él, se genera una password aleatoria que solo aparece en los logs del arranque.',
+    });
+  }
 });
 
 const parsed = Schema.safeParse(process.env);
@@ -130,6 +167,14 @@ export const config = {
       env.CONTADOR_EMAIL && env.CONTADOR_EMAIL.trim().length > 0 ? env.CONTADOR_EMAIL : undefined,
   },
 
+  auth: {
+    jwtSecret: env.JWT_SECRET,
+    jwtExpiresIn: env.JWT_EXPIRES_IN,
+    enabled: !!env.JWT_SECRET,
+    adminEmail: env.ADMIN_EMAIL,
+    adminPassword: env.ADMIN_PASSWORD,
+  },
+
   paths: {
     projectRoot,
     db: resolveFromRoot(env.DB_PATH),
@@ -142,7 +187,7 @@ export const config = {
   },
 
   logLevel: env.LOG_LEVEL,
-  version: '0.2.0',
+  version: '0.3.0',
 } as const;
 
 export type AppConfig = typeof config;

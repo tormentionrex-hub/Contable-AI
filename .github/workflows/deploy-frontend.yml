@@ -1,0 +1,79 @@
+name: Deploy frontend a GitHub Pages
+
+# Se dispara en:
+#  - push a main que toque algo de frontend/ o el workflow mismo
+#  - manualmente desde la pestaña Actions del repo
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+# Permisos mínimos para publicar a Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Si ya hay un deploy en curso, cancelamos el nuevo para que no se pisen.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit -p tsconfig.app.json
+
+      - name: Build
+        env:
+          # Si el repo se llama fwd-contable-ai, la URL final es
+          # https://<user>.github.io/fwd-contable-ai/ — necesitamos el slash al final.
+          # Usamos el secret VITE_BASE_PATH si está definido; sino /<repo>/.
+          VITE_BASE_PATH: ${{ secrets.VITE_BASE_PATH || format('/{0}/', github.event.repository.name) }}
+          # URL del backend expuesto vía ngrok / Cloudflare Tunnel.
+          # El contador debe rotarlo si cambia el túnel (free tier de ngrok
+          # cambia la URL en cada arranque).
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy a GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
